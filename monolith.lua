@@ -835,6 +835,7 @@ local function sync_delay_to_tempo()
 end
 
 local function trigger_stutter()
+  if params:get("stutter_enabled") == 1 then return end
   if stutter_clock_id then clock.cancel(stutter_clock_id) end
   stutter_active = true
   stutter_clock_id = clock.run(function()
@@ -856,6 +857,7 @@ local function trigger_stutter()
 end
 
 local function trigger_bass_drop()
+  if params:get("bass_drop_enabled") == 1 then return end
   if bass_drop_clock_id then clock.cancel(bass_drop_clock_id) end
   bass_drop_clock_id = clock.run(function()
     -- dramatic pitch dive: play root 2 octaves down with max glide
@@ -871,6 +873,7 @@ local function trigger_bass_drop()
 end
 
 local function trigger_time_warp()
+  if params:get("time_warp_enabled") == 1 then return end
   -- the slow-down / catch-up effect
   -- smoothly changes bandmate step rate: normal -> slow -> slower -> catches back up
   bandmate.warp_active = true
@@ -933,9 +936,12 @@ local function grid_redraw()
     end
     g:led(11, 2, bandmate_active and 12 or 2)
     g:led(12, 2, bandmate.locked and 15 or 2)
-    g:led(13, 2, stutter_active and 15 or 5) -- stutter
-    g:led(14, 2, 5) -- bass drop
-    g:led(15, 2, bandmate.warp_active and 15 or 5) -- time warp
+    local stut_en = params:get("stutter_enabled") == 2
+    local drop_en = params:get("bass_drop_enabled") == 2
+    local warp_en = params:get("time_warp_enabled") == 2
+    g:led(13, 2, stutter_active and 15 or (stut_en and 5 or 1)) -- stutter
+    g:led(14, 2, drop_en and 5 or 1) -- bass drop
+    g:led(15, 2, bandmate.warp_active and 15 or (warp_en and 5 or 1)) -- time warp
     g:led(16, 2, math.floor(2 + destroy * 13)) -- destroy level
 
     -- row 3: pattern viz (16 steps)
@@ -1389,6 +1395,12 @@ function init()
     local intervals = {12, 7, -7, -12}
     harmonize_interval = intervals[val]
   end)
+
+  params:add_option("stutter_enabled", "stutter", {"off", "on"}, 2)
+
+  params:add_option("bass_drop_enabled", "bass drop", {"off", "on"}, 2)
+
+  params:add_option("time_warp_enabled", "time warp", {"off", "on"}, 2)
 
   -- robot
   params:add_separator("ROBOT")
