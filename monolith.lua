@@ -46,6 +46,20 @@ local root_note = 36
 local scale_type = 1
 local bandmate_active = false
 
+-- morph state
+local morph_active = false
+local morph_mode_a = 1
+local morph_mode_b = 5
+local morph_rate = 4     -- index into MORPH_RATES
+local morph_blend = false -- false=hard cut, true=smooth
+local morph_clock_id = nil
+local morph_side = false  -- false=A, true=B
+local MORPH_RATES = {1/16, 1/8, 1/4, 1/2, 1, 2, 4}
+local MORPH_RATE_NAMES = {"1/16", "1/8", "1/4", "1/2", "1", "2", "4"}
+
+-- destroy state
+local destroy = 0
+
 local activity = {}
 for i = 1, ACT_LEN do activity[i] = {vel = 0, age = 0} end
 local act_head = 1
@@ -223,38 +237,58 @@ local MODES = {
   },
 
   ---- 6: GNARLY GROWL ----
-  -- maximum aggression. detuned, modulated, distorted.
-  -- macro: rumble -> total shred
+  -- warm aggression. thick detuned saw, chorus over ring mod,
+  -- 12dB filter for body, sine LFO for organic movement.
+  -- macro: warm rumble -> saturated growl
   {
     base = {
       oscWaveShape = 1, pwMod = 0,
-      mainOscLevel = 1.0, subOscLevel = 0.8,
-      subOscDetune = 0.5, noiseLevel = 0.18,
+      mainOscLevel = 0.9, subOscLevel = 0.95,
+      subOscDetune = 0.2, noiseLevel = 0.06,
       hpFilterCutoff = 10,
-      lpFilterCutoff = 1000, lpFilterResonance = 0.65,
-      lpFilterType = 1, lpFilterCutoffModEnv = 0.5,
-      lpFilterCutoffModLfo = 0.3, lpFilterTracking = 1,
-      env1Attack = 0.002, env1Decay = 0.2,
-      env1Sustain = 0.5, env1Release = 0.2,
-      env2Attack = 0.002, env2Decay = 0.15,
-      env2Sustain = 0.6, env2Release = 0.25,
-      chorusMix = 0.5, ringModMix = 0.35, ringModFreq = 55,
-      amp = 8, glide = 0.03,
-      lfoFreq = 6, lfoWaveShape = 2,
-      ampMod = 0.2, freqModLfo = 0.04, freqModEnv = 0.08,
+      lpFilterCutoff = 900, lpFilterResonance = 0.45,
+      lpFilterType = 0, lpFilterCutoffModEnv = 0.55,
+      lpFilterCutoffModLfo = 0.2, lpFilterTracking = 1.1,
+      env1Attack = 0.008, env1Decay = 0.25,
+      env1Sustain = 0.55, env1Release = 0.3,
+      env2Attack = 0.005, env2Decay = 0.2,
+      env2Sustain = 0.65, env2Release = 0.35,
+      chorusMix = 0.7, ringModMix = 0.1, ringModFreq = 45,
+      amp = 8, glide = 0.05,
+      lfoFreq = 3.5, lfoWaveShape = 0,
+      ampMod = 0.08, freqModLfo = 0.02, freqModEnv = 0.04,
     },
     macro_targets = {
-      lpFilterResonance = {0.65, 0.92},
-      ringModMix = {0.35, 0.9},
-      noiseLevel = {0.18, 0.6},
-      freqModLfo = {0.04, 0.15},
-      ampMod = {0.2, 0.55},
-      chorusMix = {0.5, 1.0},
-      lpFilterCutoffModLfo = {0.3, 0.75},
-      subOscDetune = {0.5, 2.0},
-      freqModEnv = {0.08, 0.3},
+      lpFilterResonance = {0.45, 0.78},
+      ringModMix = {0.1, 0.55},
+      noiseLevel = {0.06, 0.3},
+      freqModLfo = {0.02, 0.08},
+      ampMod = {0.08, 0.35},
+      chorusMix = {0.7, 1.0},
+      lpFilterCutoffModLfo = {0.2, 0.5},
+      subOscDetune = {0.2, 0.8},
+      lpFilterCutoffModEnv = {0.55, 0.85},
     },
   },
+}
+
+---------- DESTROY (D-inspired) ----------
+-- destruction layer: applied on top of any voice mode.
+-- inspired by justmat's "d" script (decimate, distort, disintegrate).
+-- since we share one engine, we abuse ring mod, resonance, noise,
+-- and pitch instability to simulate decimation/bitcrush/saturation.
+
+local DESTROY_TARGETS = {
+  -- param             = {clean, fully destroyed}
+  ringModMix           = {0, 0.95},
+  ringModFreq          = {50, 280},
+  lpFilterResonance    = {0, 0.92},
+  noiseLevel           = {0, 0.55},
+  freqModLfo           = {0, 0.12},
+  ampMod               = {0, 0.45},
+  subOscDetune         = {0, 3.0},
+  lpFilterCutoffModLfo = {0, 0.6},
+  lfoFreq              = {1, 18},
 }
 
 ---------- ENGINE HELPERS ----------
@@ -263,6 +297,27 @@ local function apply_engine_params(p)
   for name, val in pairs(p) do
     if engine[name] then
       engine[name](val)
+    end
+  end
+end
+
+local function apply_destroy_layer()
+  -- layer destruction on top of current voice+macro state.
+  -- at destroy=0 this is a no-op (targets lerp from mode's own values).
+  -- at destroy=1 we override toward maximum destruction.
+  if destroy <= 0 then return end
+  local mode = MODES[voice_mode]
+  for name, range in pairs(DESTROY_TARGETS) do
+    -- find current "clean" value from mode base + macro
+    local clean = mode.base[name] or 0
+    if mode.macro_targets and mode.macro_targets[name] then
+      local lo, hi = mode.macro_targets[name][1], mode.macro_targets[name][2]
+      clean = lo + (hi - lo) * macro
+    end
+    local dirty = range[2]
+    local v = clean + (dirty - clean) * destroy
+    if engine[name] then
+      engine[name](v)
     end
   end
 end
@@ -278,6 +333,7 @@ local function apply_macro_val(val)
       engine[name](v)
     end
   end
+  apply_destroy_layer()
 end
 
 local function apply_voice(mode_num)
@@ -285,6 +341,72 @@ local function apply_voice(mode_num)
   local mode = MODES[voice_mode]
   apply_engine_params(mode.base)
   apply_macro_val(macro)
+end
+
+---------- MODE MORPH ----------
+
+local function morph_apply_blend(mix)
+  -- mix: 0.0 = pure mode A, 1.0 = pure mode B
+  local a = MODES[morph_mode_a].base
+  local b = MODES[morph_mode_b].base
+  for name, val_a in pairs(a) do
+    local val_b = b[name] or val_a
+    local v = val_a + (val_b - val_a) * mix
+    if engine[name] then
+      engine[name](v)
+    end
+  end
+  -- also blend macro targets at current macro position
+  local ma = MODES[morph_mode_a].macro_targets or {}
+  local mb = MODES[morph_mode_b].macro_targets or {}
+  local all_keys = {}
+  for k in pairs(ma) do all_keys[k] = true end
+  for k in pairs(mb) do all_keys[k] = true end
+  for name in pairs(all_keys) do
+    local va = ma[name] and (ma[name][1] + (ma[name][2] - ma[name][1]) * macro) or (MODES[morph_mode_a].base[name] or 0)
+    local vb = mb[name] and (mb[name][1] + (mb[name][2] - mb[name][1]) * macro) or (MODES[morph_mode_b].base[name] or 0)
+    local v = va + (vb - va) * mix
+    if engine[name] then
+      engine[name](v)
+    end
+  end
+  apply_destroy_layer()
+end
+
+local function morph_start()
+  if morph_clock_id then return end
+  morph_active = true
+  morph_side = false
+  morph_clock_id = clock.run(function()
+    while morph_active do
+      clock.sync(MORPH_RATES[morph_rate])
+      morph_side = not morph_side
+      if morph_blend then
+        -- smooth: 4-step interpolation across the beat
+        local from = morph_side and 0 or 1
+        local to = morph_side and 1 or 0
+        local steps = 4
+        for s = 1, steps do
+          local mix = from + (to - from) * (s / steps)
+          morph_apply_blend(mix)
+          clock.sync(MORPH_RATES[morph_rate] / steps)
+        end
+      else
+        -- hard cut
+        local target = morph_side and morph_mode_b or morph_mode_a
+        voice_mode = target
+        apply_voice(target)
+      end
+    end
+  end)
+end
+
+local function morph_stop()
+  morph_active = false
+  if morph_clock_id then
+    clock.cancel(morph_clock_id)
+    morph_clock_id = nil
+  end
 end
 
 ---------- NOTE HANDLING ----------
@@ -375,6 +497,36 @@ function init()
   params:set_action("filter_cutoff", function(val)
     filter_base = val
     engine.lpFilterCutoff(val)
+  end)
+
+  -- morph
+  params:add_separator("MODE MORPH")
+
+  params:add_option("morph_on", "morph", {"off", "on"}, 1)
+  params:set_action("morph_on", function(val)
+    if val == 2 then morph_start() else morph_stop() end
+  end)
+
+  params:add_option("morph_mode_a", "mode A", MODE_NAMES, 1)
+  params:set_action("morph_mode_a", function(val) morph_mode_a = val end)
+
+  params:add_option("morph_mode_b", "mode B", MODE_NAMES, 5)
+  params:set_action("morph_mode_b", function(val) morph_mode_b = val end)
+
+  params:add_option("morph_rate", "rate", MORPH_RATE_NAMES, 4)
+  params:set_action("morph_rate", function(val) morph_rate = val end)
+
+  params:add_option("morph_blend", "blend", {"hard cut", "smooth"}, 1)
+  params:set_action("morph_blend", function(val) morph_blend = val == 2 end)
+
+  -- destroy
+  params:add_separator("DESTROY")
+
+  params:add_control("destroy", "destroy",
+    controlspec.new(0, 1, 'lin', 0.01, 0, ""))
+  params:set_action("destroy", function(val)
+    destroy = val
+    apply_destroy_layer()
   end)
 
   -- bandmate
@@ -530,10 +682,33 @@ function redraw()
     screen.fill()
   end
 
-  -- mode name
+  -- mode name (or morph indicator)
   screen.level(15)
   screen.move(2, 18)
-  screen.text(MODE_NAMES[voice_mode])
+  if morph_active then
+    local side_name = morph_side and MODE_NAMES[morph_mode_b] or MODE_NAMES[morph_mode_a]
+    screen.text(side_name)
+    -- morph arrows
+    screen.level(6)
+    screen.move(screen.text_extents(side_name) + 6, 18)
+    screen.text("<>")
+  else
+    screen.text(MODE_NAMES[voice_mode])
+  end
+
+  -- destroy indicator (right side, bar)
+  if destroy > 0.01 then
+    local dx = 104
+    screen.level(3)
+    screen.rect(dx, 11, 22, 5)
+    screen.stroke()
+    screen.level(math.floor(4 + destroy * 11))
+    screen.rect(dx, 11, math.floor(22 * destroy), 5)
+    screen.fill()
+    screen.level(6)
+    screen.move(dx, 10)
+    screen.text("D")
+  end
 
   -- separator
   screen.level(3)
@@ -622,6 +797,7 @@ end
 
 function cleanup()
   all_notes_off()
+  morph_stop()
   bandmate.stop()
   if screen_metro then screen_metro:stop() end
   pcall(audio.comp_off)

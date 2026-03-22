@@ -5,8 +5,8 @@
 -- robot strategy: the macro knob is the main lever. robot should ride it
 -- like a DJ rides a filter — slow builds, sudden drops, tension and release.
 -- voice mode switches are dramatic structural moments (use sparingly).
--- filter and ring mod are the grit controls. intensity drives the bandmate
--- from sparse dub to chaotic squarepusher territory.
+-- the destroy knob is the wildcard — robot can push it for D-style decimation
+-- moments then pull back to clean. morph between modes for rapid texture shifts.
 -- the bass should BREATHE — alternate between sub-heavy quiet and
 -- gnarly aggressive peaks. never settle.
 
@@ -27,7 +27,18 @@ return {
   },
 
   params = {
-    ---------- PRIMARY: macro is king ----------
+    ---------- PRIMARY: macro + destroy ----------
+    destroy = {
+      group = "timbral",
+      weight = 0.8,
+      sensitivity = 0.6,
+      direction = "both",
+      -- D-style decimation layer. robot should use this for
+      -- brief bursts of chaos, not sustained destruction.
+      -- push it up fast, pull back slow. dramatic weapon.
+      range_lo = 0,
+      range_hi = 0.85,
+    },
     macro = {
       group = "timbral",
       weight = 0.95,
@@ -186,6 +197,31 @@ return {
       sensitivity = 1.0,
       direction = "both",
       -- robot can turn bandmate on/off for texture shifts.
+    },
+    morph_on = {
+      group = "structural",
+      weight = 0.25,
+      sensitivity = 1.0,
+      direction = "both",
+      -- morph creates rapid texture oscillation. dramatic tool.
+    },
+    morph_mode_a = {
+      group = "structural",
+      weight = 0.2,
+      sensitivity = 1.0,
+      direction = "both",
+    },
+    morph_mode_b = {
+      group = "structural",
+      weight = 0.2,
+      sensitivity = 1.0,
+      direction = "both",
+    },
+    morph_rate = {
+      group = "rhythmic",
+      weight = 0.3,
+      sensitivity = 1.0,
+      direction = "both",
     },
   },
 }
