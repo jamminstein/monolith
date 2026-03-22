@@ -12,7 +12,7 @@
 
 return {
   name = "monolith",
-  description = "Brutal synth bass - 6 voice modes, macro morphing, bandmate generative engine",
+  description = "Brutal synth bass - 11 voice modes, effects, grid, snapshots, bandmate with 9 styles",
   phrase_len = 16,
   recommended_modes = {1, 3, 7, 10}, -- FUNK, APHEX, DRUNK, CHAOS
   never_touch = {
@@ -252,6 +252,47 @@ return {
       weight = 0.1,
       sensitivity = 1.0,
       direction = "both",
+    },
+    delay_on = {
+      group = "timbral",
+      weight = 0.35,
+      sensitivity = 1.0,
+      direction = "both",
+      -- tape delay adds space. robot can toggle for texture shifts.
+    },
+    delay_feedback = {
+      group = "timbral",
+      weight = 0.4,
+      sensitivity = 0.5,
+      direction = "both",
+      range_lo = 0.1,
+      range_hi = 0.8,
+    },
+    delay_level = {
+      group = "timbral",
+      weight = 0.35,
+      sensitivity = 0.4,
+      direction = "both",
+    },
+    harmonize_on = {
+      group = "structural",
+      weight = 0.2,
+      sensitivity = 1.0,
+      direction = "both",
+      -- harmonize is dramatic. use rarely for big moments.
+    },
+    harmonize_int = {
+      group = "melodic",
+      weight = 0.15,
+      sensitivity = 1.0,
+      direction = "both",
+    },
+    robot_personality = {
+      group = "structural",
+      weight = 0.1,
+      sensitivity = 1.0,
+      direction = "both",
+      -- robot can shift its own personality. meta.
     },
   },
 }

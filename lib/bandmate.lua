@@ -38,6 +38,10 @@ b.breath_phase = "play" -- "play", "fade", "silence", "build"
 -- per-mode glide (set by host)
 b.mode_glide = 0
 
+-- time warp (set by host)
+b.warp_rate = 1.0
+b.warp_active = false
+
 -- pattern lock + favorites
 b.locked = false
 b.favorites = {}
@@ -616,7 +620,7 @@ function b.start()
   b.generate_pattern()
   b.clock_id = clock.run(function()
     while b.playing do
-      clock.sync(1/4) -- 16th note
+      clock.sync((1/4) * b.warp_rate) -- 16th note, stretched by warp
       b.advance()
     end
   end)

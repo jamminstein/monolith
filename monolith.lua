@@ -29,8 +29,13 @@ local MODE_NAMES = {
   "DIST WALL",
   "VOWEL BOT",
   "GNARLY",
+  "TAPE SAT",
+  "DOOM",
+  "TALK BOX",
+  "SYNTH POP",
+  "RUBBER",
 }
-local NUM_MODES = 6
+local NUM_MODES = 11
 local SCALE_NAMES = {
   "Minor Pentatonic", "Dorian", "Chromatic",
   "Minor", "Phrygian", "Mixolydian",
@@ -78,8 +83,24 @@ local screen_metro
 local data_dir -- set in init()
 
 -- snapshots
-local snapshot_slots = {} -- which slots have data (boolean array)
+local snapshot_slots = {}
 local SNAPSHOT_COUNT = 32
+
+-- effects
+local delay_on = false
+local delay_time = 0.375
+local delay_feedback = 0.45
+local delay_level = 0.35
+local harmonize_on = false
+local harmonize_interval = 12 -- semitones (12=octave below by default)
+local harmony_notes = {} -- track active harmony notes
+local stutter_active = false
+local stutter_clock_id = nil
+local bass_drop_clock_id = nil
+
+-- robot
+local robot_personality = 1 -- 1=chill, 2=aggressive, 3=chaotic
+local PERSONALITY_NAMES = {"chill", "aggressive", "chaotic"}
 
 ---------- VOICE MODES ----------
 -- each mode: base engine params, macro morph targets (lo/hi),
@@ -278,6 +299,165 @@ local MODES = {
       lpFilterCutoffModEnv = {0.55, 0.85},
     },
   },
+
+  ---- 7: TAPE SAT ----
+  -- warm lo-fi cassette bass. gentle saturation, tape hiss, dark filter.
+  -- macro: clean tape -> saturated wobble
+  {
+    base = {
+      oscWaveShape = 1, pwMod = 0,
+      mainOscLevel = 0.85, subOscLevel = 0.7,
+      subOscDetune = 0.05, noiseLevel = 0.04,
+      hpFilterCutoff = 30,
+      lpFilterCutoff = 1200, lpFilterResonance = 0.2,
+      lpFilterType = 0, lpFilterCutoffModEnv = 0.25,
+      lpFilterCutoffModLfo = 0.08, lpFilterTracking = 1,
+      env1Attack = 0.015, env1Decay = 0.35,
+      env1Sustain = 0.6, env1Release = 0.4,
+      env2Attack = 0.01, env2Decay = 0.3,
+      env2Sustain = 0.7, env2Release = 0.45,
+      chorusMix = 0.4, ringModMix = 0.12, ringModFreq = 40,
+      amp = 7, glide = 0.04,
+      lfoFreq = 0.8, lfoWaveShape = 0,
+      ampMod = 0.03, freqModLfo = 0.01, freqModEnv = 0,
+    },
+    macro_targets = {
+      ringModMix = {0.12, 0.5},
+      noiseLevel = {0.04, 0.25},
+      lpFilterCutoff = {1200, 600},
+      lpFilterResonance = {0.2, 0.5},
+      freqModLfo = {0.01, 0.06},
+      chorusMix = {0.4, 0.7},
+      ampMod = {0.03, 0.15},
+    },
+  },
+
+  ---- 8: DOOM ----
+  -- ultra heavy ultra slow. monolithic sustain, earthquake sub.
+  -- macro: heavy -> apocalyptic
+  {
+    base = {
+      oscWaveShape = 2, pwMod = 0.1,
+      mainOscLevel = 0.9, subOscLevel = 1.0,
+      subOscDetune = 0.15, noiseLevel = 0.03,
+      hpFilterCutoff = 10,
+      lpFilterCutoff = 500, lpFilterResonance = 0.3,
+      lpFilterType = 1, lpFilterCutoffModEnv = 0.15,
+      lpFilterCutoffModLfo = 0.05, lpFilterTracking = 0.8,
+      env1Attack = 0.05, env1Decay = 1.0,
+      env1Sustain = 0.85, env1Release = 1.5,
+      env2Attack = 0.03, env2Decay = 0.8,
+      env2Sustain = 0.9, env2Release = 2.0,
+      chorusMix = 0.6, ringModMix = 0.05, ringModFreq = 30,
+      amp = 9, glide = 0.2,
+      lfoFreq = 0.3, lfoWaveShape = 0,
+      ampMod = 0, freqModLfo = 0, freqModEnv = 0,
+    },
+    macro_targets = {
+      lpFilterCutoff = {500, 1800},
+      lpFilterResonance = {0.3, 0.7},
+      subOscDetune = {0.15, 1.0},
+      noiseLevel = {0.03, 0.3},
+      ringModMix = {0.05, 0.4},
+      chorusMix = {0.6, 1.0},
+      freqModLfo = {0, 0.05},
+    },
+  },
+
+  ---- 9: TALK BOX ----
+  -- extreme formant sweeps. zapp, roger troutman, robot voice.
+  -- macro: slow talk -> fast babble
+  {
+    base = {
+      oscWaveShape = 2, pwMod = 0.6,
+      mainOscLevel = 0.8, subOscLevel = 0.4,
+      subOscDetune = 0, noiseLevel = 0.05,
+      hpFilterCutoff = 10,
+      lpFilterCutoff = 1000, lpFilterResonance = 0.65,
+      lpFilterType = 0, lpFilterCutoffModEnv = 0.15,
+      lpFilterCutoffModLfo = 0.6, lpFilterTracking = 1.2,
+      env1Attack = 0.02, env1Decay = 0.3,
+      env1Sustain = 0.7, env1Release = 0.3,
+      env2Attack = 0.01, env2Decay = 0.25,
+      env2Sustain = 0.75, env2Release = 0.35,
+      chorusMix = 0.2, ringModMix = 0.55, ringModFreq = 180,
+      amp = 7, glide = 0.06,
+      lfoFreq = 2.5, lfoWaveShape = 0,
+      ampMod = 0.05, freqModLfo = 0, freqModEnv = 0,
+    },
+    macro_targets = {
+      lfoFreq = {2.5, 12},
+      ringModFreq = {180, 295},
+      ringModMix = {0.55, 0.85},
+      lpFilterResonance = {0.65, 0.85},
+      lpFilterCutoffModLfo = {0.6, 0.95},
+      pwMod = {0.6, 0.9},
+      noiseLevel = {0.05, 0.2},
+    },
+  },
+
+  ---- 10: SYNTH POP ----
+  -- bright bouncy new order / depeche mode bass.
+  -- macro: clean pop -> acid pop
+  {
+    base = {
+      oscWaveShape = 1, pwMod = 0,
+      mainOscLevel = 0.85, subOscLevel = 0.3,
+      subOscDetune = 0, noiseLevel = 0,
+      hpFilterCutoff = 30,
+      lpFilterCutoff = 2500, lpFilterResonance = 0.2,
+      lpFilterType = 0, lpFilterCutoffModEnv = 0.4,
+      lpFilterCutoffModLfo = 0, lpFilterTracking = 1.3,
+      env1Attack = 0.002, env1Decay = 0.2,
+      env1Sustain = 0.35, env1Release = 0.15,
+      env2Attack = 0.002, env2Decay = 0.25,
+      env2Sustain = 0.4, env2Release = 0.2,
+      chorusMix = 0.5, ringModMix = 0, ringModFreq = 50,
+      amp = 6.5, glide = 0,
+      lfoFreq = 1, lfoWaveShape = 0,
+      ampMod = 0, freqModLfo = 0, freqModEnv = 0,
+    },
+    macro_targets = {
+      lpFilterResonance = {0.2, 0.6},
+      lpFilterCutoffModEnv = {0.4, 0.8},
+      chorusMix = {0.5, 0.85},
+      subOscLevel = {0.3, 0.65},
+      ringModMix = {0, 0.2},
+      env1Decay = {0.2, 0.5},
+    },
+  },
+
+  ---- 11: RUBBER ----
+  -- elastic cartoon bass. bouncy pitch bends, playful.
+  -- macro: subtle bounce -> extreme elastic
+  {
+    base = {
+      oscWaveShape = 0, pwMod = 0,
+      mainOscLevel = 0.85, subOscLevel = 0.6,
+      subOscDetune = 0, noiseLevel = 0,
+      hpFilterCutoff = 10,
+      lpFilterCutoff = 1800, lpFilterResonance = 0.25,
+      lpFilterType = 0, lpFilterCutoffModEnv = 0.3,
+      lpFilterCutoffModLfo = 0, lpFilterTracking = 1,
+      env1Attack = 0.002, env1Decay = 0.12,
+      env1Sustain = 0.15, env1Release = 0.1,
+      env2Attack = 0.002, env2Decay = 0.15,
+      env2Sustain = 0.2, env2Release = 0.12,
+      chorusMix = 0.3, ringModMix = 0, ringModFreq = 50,
+      amp = 7, glide = 0.18,
+      lfoFreq = 2, lfoWaveShape = 0,
+      ampMod = 0, freqModLfo = 0, freqModEnv = 0.25,
+    },
+    macro_targets = {
+      freqModEnv = {0.25, 0.7},
+      glide = {0.18, 0.5},
+      lpFilterCutoff = {1800, 3000},
+      env1Decay = {0.12, 0.05},
+      chorusMix = {0.3, 0.6},
+      subOscLevel = {0.6, 0.9},
+      lpFilterResonance = {0.25, 0.5},
+    },
+  },
 }
 
 ---------- VELOCITY CURVES ----------
@@ -291,6 +471,11 @@ local VEL_CURVES = {
   function(v) return 0.6 + v * 0.4 end,   -- 4 DIST WALL: always loud
   function(v) return 0.4 + v * 0.6 end,   -- 5 VOWEL BOT: moderate
   function(v) return 0.35 + v * 0.65 end, -- 6 GNARLY: floor + sensitive
+  function(v) return 0.4 + v * 0.6 end,  -- 7 TAPE SAT: moderate warmth
+  function(v) return 0.75 + v * 0.25 end, -- 8 DOOM: compressed, always heavy
+  function(v) return 0.4 + v * 0.6 end,  -- 9 TALK BOX: moderate
+  function(v) return v end,                -- 10 SYNTH POP: full sensitivity
+  function(v) return 0.3 + v * 0.7 end,  -- 11 RUBBER: bouncy with floor
 }
 
 local function apply_vel_curve(vel)
@@ -602,6 +787,104 @@ local function snapshot_scan()
   end
 end
 
+---------- EFFECTS ----------
+
+local function setup_softcut_delay()
+  softcut.reset()
+  audio.level_eng_cut(1)
+  audio.level_cut(0) -- start silent, enable when delay is on
+  -- voice 1: delay line
+  softcut.enable(1, 1)
+  softcut.buffer(1, 1)
+  softcut.level(1, delay_level)
+  softcut.pan(1, 0)
+  softcut.rate(1, 1)
+  softcut.loop(1, 1)
+  softcut.loop_start(1, 0)
+  softcut.loop_end(1, delay_time)
+  softcut.position(1, 0)
+  softcut.play(1, 1)
+  softcut.rec(1, 1)
+  softcut.rec_level(1, 1)
+  softcut.pre_level(1, delay_feedback)
+  softcut.level_slew_time(1, 0.05)
+  softcut.rate_slew_time(1, 0.1)
+  softcut.filter_dry(1, 0.7)
+  softcut.filter_lp(1, 0.3)
+  softcut.filter_fc(1, 2000)
+end
+
+local function update_delay()
+  if delay_on then
+    audio.level_cut(1)
+    softcut.level(1, delay_level)
+    softcut.loop_end(1, math.max(0.05, delay_time))
+    softcut.pre_level(1, delay_feedback)
+  else
+    audio.level_cut(0)
+  end
+end
+
+local function sync_delay_to_tempo()
+  -- delay time synced to beat divisions
+  local beat_sec = 60 / clock.get_tempo()
+  delay_time = beat_sec * 0.5 -- dotted 8th feel
+  if delay_on then
+    softcut.loop_end(1, math.max(0.05, delay_time))
+  end
+end
+
+local function trigger_stutter()
+  if stutter_clock_id then clock.cancel(stutter_clock_id) end
+  stutter_active = true
+  stutter_clock_id = clock.run(function()
+    local rates = {1/16, 1/16, 1/16, 1/8, 1/8, 1/4, 1/4, 1/2, 1/4, 1/8, 1/16, 1/16}
+    local vel_decay = 1.0
+    for i, rate in ipairs(rates) do
+      if not stutter_active then break end
+      if last_note > 0 then
+        note_off(last_note)
+        note_on(last_note, last_vel * vel_decay)
+        vel_decay = vel_decay * 0.92
+      end
+      clock.sync(rate)
+    end
+    if last_note > 0 then note_off(last_note) end
+    stutter_active = false
+    stutter_clock_id = nil
+  end)
+end
+
+local function trigger_bass_drop()
+  if bass_drop_clock_id then clock.cancel(bass_drop_clock_id) end
+  bass_drop_clock_id = clock.run(function()
+    -- dramatic pitch dive: play root 2 octaves down with max glide
+    local drop_note = math.max(20, root_note - 24)
+    engine.glide(0.4)
+    note_on(drop_note, 1.0)
+    clock.sync(2) -- sustain for 2 beats
+    note_off(drop_note)
+    -- restore mode glide
+    engine.glide(MODES[voice_mode].base.glide or 0)
+    bass_drop_clock_id = nil
+  end)
+end
+
+local function trigger_time_warp()
+  -- the slow-down / catch-up effect
+  -- smoothly changes bandmate step rate: normal -> slow -> slower -> catches back up
+  bandmate.warp_active = true
+  clock.run(function()
+    local curve = {1.0, 1.5, 2.5, 4.0, 4.0, 3.0, 2.0, 1.5, 1.0}
+    for _, rate in ipairs(curve) do
+      bandmate.warp_rate = rate
+      clock.sync(0.5) -- each stage lasts half a beat
+    end
+    bandmate.warp_rate = 1.0
+    bandmate.warp_active = false
+  end)
+end
+
 ---------- GRID ----------
 
 local g = grid.connect()
@@ -634,24 +917,26 @@ local function grid_redraw()
   if grid_page == 1 then
     ---- PAGE 1: PERFORM ----
 
-    -- row 1: mode select (1-6) + morph (8) + destroy bar (10-16)
+    -- row 1: mode select (1-11) + morph (13) + delay (14) + harmonize (15) + page (16)
+    local cur_mode = morph_active and morph_current or voice_mode
     for i = 1, NUM_MODES do
-      g:led(i, 1, (morph_active and morph_current or voice_mode) == i and 15 or 3)
+      g:led(i, 1, cur_mode == i and 15 or 3)
     end
-    g:led(8, 1, morph_active and 12 or 2)
-    for i = 10, 16 do
-      local lvl = (i - 10) / 6
-      g:led(i, 1, destroy >= lvl and (math.floor(4 + destroy * 11)) or 1)
-    end
+    g:led(13, 1, morph_active and 12 or 2)
+    g:led(14, 1, delay_on and 12 or 2)
+    g:led(15, 1, harmonize_on and 12 or 2)
+    g:led(16, 1, 6) -- page toggle
 
-    -- row 2: bandmate style (1-9) + on/off (11) + lock (13) + save (15) + page (16)
-    for i = 1, #bandmate.STYLE_NAMES do
+    -- row 2: bandmate (1-9) + on/off (11) + lock (12) + stutter (13) + drop (14) + warp (15) + destroy bar (16)
+    for i = 1, math.min(9, #bandmate.STYLE_NAMES) do
       g:led(i, 2, bandmate.style == i and 12 or 2)
     end
     g:led(11, 2, bandmate_active and 12 or 2)
-    g:led(13, 2, bandmate.locked and 15 or 2)
-    g:led(15, 2, 4)
-    g:led(16, 2, 6) -- page toggle
+    g:led(12, 2, bandmate.locked and 15 or 2)
+    g:led(13, 2, stutter_active and 15 or 5) -- stutter
+    g:led(14, 2, 5) -- bass drop
+    g:led(15, 2, bandmate.warp_active and 15 or 5) -- time warp
+    g:led(16, 2, math.floor(2 + destroy * 13)) -- destroy level
 
     -- row 3: pattern viz (16 steps)
     for i = 1, 16 do
@@ -740,25 +1025,48 @@ g.key = function(x, y, z)
     if y == 1 then
       if x >= 1 and x <= NUM_MODES then
         params:set("voice_mode", x)
-      elseif x == 8 then
+      elseif x == 13 then
         params:set("morph_on", morph_active and 1 or 2)
-      elseif x >= 10 and x <= 16 then
-        local d = (x - 10) / 6
-        params:set("destroy", d)
+      elseif x == 14 then
+        params:set("delay_on", delay_on and 1 or 2)
+      elseif x == 15 then
+        params:set("harmonize_on", harmonize_on and 1 or 2)
+      elseif x == 16 then
+        grid_page = 2
       end
     elseif y == 2 then
-      if x >= 1 and x <= #bandmate.STYLE_NAMES then
+      if x >= 1 and x <= math.min(9, #bandmate.STYLE_NAMES) then
         params:set("bm_style", x)
       elseif x == 11 then
         params:set("bandmate_on", bandmate_active and 1 or 2)
-      elseif x == 13 then
+      elseif x == 12 then
         bandmate.toggle_lock()
         params:set("bm_lock", bandmate.locked and 2 or 1, true)
+      elseif x == 13 then
+        trigger_stutter()
+      elseif x == 14 then
+        trigger_bass_drop()
       elseif x == 15 then
-        local slot = bandmate.save_to_next_slot(data_dir)
-        print("monolith: pattern saved to slot " .. slot)
+        trigger_time_warp()
       elseif x == 16 then
-        grid_page = 2
+        -- destroy: cycle through levels 0, 0.3, 0.6, 1.0
+        local levels = {0, 0.3, 0.6, 1.0}
+        local cur_idx = 1
+        for i, lv in ipairs(levels) do
+          if math.abs(destroy - lv) < 0.1 then cur_idx = i end
+        end
+        params:set("destroy", levels[(cur_idx % #levels) + 1])
+      end
+    elseif y == 3 then
+      -- row 3: pattern EDIT — tap to toggle steps
+      if bandmate.pattern[x] then
+        bandmate.pattern[x] = nil -- remove step
+      else
+        bandmate.pattern[x] = {
+          offset = 0,
+          vel = 0.7 + math.random() * 0.2,
+          gate = 0.3 + math.random() * 0.2,
+        }
       end
     elseif y >= 4 and y <= 8 then
       -- note pad
@@ -817,6 +1125,15 @@ local function note_on(note, vel)
   current_notes[note] = vel
   last_note = note
   last_vel = vel
+  -- auto-harmonize
+  if harmonize_on then
+    local h_note = note - harmonize_interval
+    if h_note >= 20 and h_note <= 108 then
+      local h_freq = musicutil.note_num_to_freq(h_note)
+      engine.noteOn(h_note + 1000, h_freq, vel * 0.6) -- offset ID to avoid collision
+      harmony_notes[note] = h_note
+    end
+  end
   -- seismograph
   activity[act_head] = {vel = vel, age = 0}
   act_head = act_head % ACT_LEN + 1
@@ -824,14 +1141,21 @@ local function note_on(note, vel)
   if midi_out_device and params:get("midi_out") == 2 then
     midi_out_device:note_on(note, math.floor(vel * 127), midi_out_channel)
   end
+  grid_dirty = true
 end
 
 local function note_off(note)
   engine.noteOff(note)
   current_notes[note] = nil
+  -- harmony note off
+  if harmony_notes[note] then
+    engine.noteOff(harmony_notes[note] + 1000)
+    harmony_notes[note] = nil
+  end
   if midi_out_device and params:get("midi_out") == 2 then
     midi_out_device:note_off(note, 0, midi_out_channel)
   end
+  grid_dirty = true
 end
 
 local function all_notes_off()
@@ -1033,6 +1357,45 @@ function init()
     snapshot_load(params:get("snap_slot"))
   end)
 
+  -- effects
+  params:add_separator("EFFECTS")
+
+  params:add_option("delay_on", "tape delay", {"off", "on"}, 1)
+  params:set_action("delay_on", function(val)
+    delay_on = val == 2
+    update_delay()
+  end)
+
+  params:add_control("delay_feedback", "delay feedback",
+    controlspec.new(0, 0.9, 'lin', 0.01, 0.45))
+  params:set_action("delay_feedback", function(val)
+    delay_feedback = val
+    if delay_on then softcut.pre_level(1, val) end
+  end)
+
+  params:add_control("delay_level", "delay level",
+    controlspec.new(0, 1, 'lin', 0.01, 0.35))
+  params:set_action("delay_level", function(val)
+    delay_level = val
+    if delay_on then softcut.level(1, val) end
+  end)
+
+  params:add_option("harmonize_on", "auto-harmonize", {"off", "on"}, 1)
+  params:set_action("harmonize_on", function(val) harmonize_on = val == 2 end)
+
+  params:add_option("harmonize_int", "harmony interval",
+    {"octave below", "5th below", "5th above", "octave above"}, 1)
+  params:set_action("harmonize_int", function(val)
+    local intervals = {12, 7, -7, -12}
+    harmonize_interval = intervals[val]
+  end)
+
+  -- robot
+  params:add_separator("ROBOT")
+
+  params:add_option("robot_personality", "personality", PERSONALITY_NAMES, 1)
+  params:set_action("robot_personality", function(val) robot_personality = val end)
+
   -- compressor
   params:add_separator("COMPRESSOR")
   params:add_option("comp_on", "compressor", {"off", "on"}, 2)
@@ -1059,7 +1422,8 @@ function init()
   bandmate.init(note_on, note_off, root_note, SCALE_NAMES[scale_type])
   bandmate.load_all_favorites(data_dir)
 
-  -- init snapshots + grid
+  -- init effects + snapshots + grid
+  setup_softcut_delay()
   snapshot_scan()
   build_grid_note_map()
 
