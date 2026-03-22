@@ -24,6 +24,11 @@ return {
     "midi_out_ch",
     "midi_out",
     "comp_on",
+    "snap_slot",
+    "snap_save",
+    "snap_load",
+    "bm_save_slot",
+    "bm_save_now",
   },
 
   params = {
@@ -220,6 +225,31 @@ return {
     morph_rate = {
       group = "rhythmic",
       weight = 0.3,
+      sensitivity = 1.0,
+      direction = "both",
+    },
+    morph_style = {
+      group = "structural",
+      weight = 0.2,
+      sensitivity = 1.0,
+      direction = "both",
+    },
+    bm_lock = {
+      group = "structural",
+      weight = 0.2,
+      sensitivity = 1.0,
+      direction = "both",
+      -- robot can lock a good pattern to ride it longer.
+    },
+    bm_fav_mode = {
+      group = "structural",
+      weight = 0.15,
+      sensitivity = 1.0,
+      direction = "both",
+    },
+    bm_fav_order = {
+      group = "structural",
+      weight = 0.1,
       sensitivity = 1.0,
       direction = "both",
     },

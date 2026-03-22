@@ -12,7 +12,7 @@ local musicutil = require "musicutil"
 
 local b = {}
 
-b.STYLE_NAMES = {"FUNK", "ROCK", "ACID", "DUB", "CHAOS"}
+b.STYLE_NAMES = {"FUNK", "ROCK", "ACID", "DUB", "CHAOS", "HIP-HOP", "SHUFFLE", "HALFTIME", "LATIN"}
 
 -- state
 b.playing = false
@@ -35,6 +35,16 @@ b.breathing = true   -- enable breathing
 b.breath_bar = 0     -- counter for breath cycle
 b.breath_phase = "play" -- "play", "fade", "silence", "build"
 
+-- per-mode glide (set by host)
+b.mode_glide = 0
+
+-- pattern lock + favorites
+b.locked = false
+b.favorites = {}
+b.favorites_mode = false
+b.favorites_order = "sequential"
+b.favorites_idx = 1
+
 ---------- NOTE SELECTION ----------
 
 local function pick_interval(style)
@@ -49,6 +59,14 @@ local function pick_interval(style)
     {0, 0, 0, 0, 0, 0, 7, -12, 12},
     -- CHAOS: wide intervals, dissonance welcome
     {0, 3, 5, 7, 10, 12, -12, -5, -7, 15, 14, 2, 1, -1, 17, 19},
+    -- HIP-HOP: root and sub octave heavy
+    {0, 0, 0, 0, 0, -12, -12, 7, 12},
+    -- SHUFFLE: stepwise walking
+    {0, 0, 0, 2, 3, 5, 7, -2, -5, 10},
+    -- HALFTIME: root and power
+    {0, 0, 0, 0, -12, 7, 12},
+    -- LATIN: root with fifth color
+    {0, 0, 0, 7, 7, 5, -12, 12, 3},
   }
   local pool = pools[style] or pools[1]
   return pool[math.random(#pool)]
@@ -277,9 +295,159 @@ local function gen_chaos(intensity)
   return p
 end
 
+local function gen_hiphop(intensity)
+  local p = {}
+  local int = intensity / 10
+
+  -- heavy 808 hit on the 1
+  p[1] = {offset = -12, vel = 1.0, gate = 0.7 + math.random() * 0.2}
+
+  -- hit on beat 3
+  if math.random() < 0.7 then
+    p[9] = {offset = 0, vel = 0.9, gate = 0.6}
+  end
+
+  -- sliding 808: long sustained note with slide
+  if math.random() < 0.4 + int * 0.2 then
+    local pos = ({5, 7, 13})[math.random(3)]
+    p[pos] = {offset = pick_interval(6), vel = 0.7 + math.random() * 0.2, gate = 0.8, slide = true}
+  end
+
+  -- triplet-feel hits at high intensity
+  if int > 0.5 then
+    local triplet_pos = {4, 7, 10, 13}
+    for _, pos in ipairs(triplet_pos) do
+      if not p[pos] and math.random() < (int - 0.4) * 0.3 then
+        p[pos] = {offset = pick_interval(6), vel = 0.5 + math.random() * 0.3, gate = 0.2}
+      end
+    end
+  end
+
+  -- occasional 16th ghost
+  if int > 0.6 and math.random() < 0.3 then
+    local pos = math.random(16)
+    if not p[pos] then
+      p[pos] = {offset = 0, vel = 0.15 + math.random() * 0.15, gate = 0.1}
+    end
+  end
+
+  return p
+end
+
+local function gen_shuffle(intensity)
+  local p = {}
+  local int = intensity / 10
+
+  -- shuffle feel: approximate triplet swing on 16th grid
+  -- strong on 1, 4, 5, 8, 9, 12, 13, 16 (swing 8ths)
+  local swing_hits = {1, 4, 5, 8, 9, 12, 13, 16}
+  local walk_offset = 0
+
+  for _, pos in ipairs(swing_hits) do
+    if math.random() < 0.65 + int * 0.3 then
+      -- walking motion: move up or down by scale step
+      if math.random() < 0.6 then
+        walk_offset = walk_offset + ({-2, -1, 1, 2, 3, 5})[math.random(6)]
+        walk_offset = util.clamp(walk_offset, -12, 12)
+      end
+      p[pos] = {
+        offset = walk_offset,
+        vel = (pos == 1 or pos == 9) and (0.85 + math.random() * 0.15) or (0.5 + math.random() * 0.35),
+        gate = 0.35 + math.random() * 0.25,
+      }
+    end
+  end
+
+  -- always hit the 1
+  p[1] = p[1] or {offset = 0, vel = 0.9, gate = 0.45}
+
+  -- passing tones between swing hits at high intensity
+  if int > 0.6 then
+    for i = 1, 16 do
+      if not p[i] and math.random() < (int - 0.5) * 0.2 then
+        p[i] = {offset = walk_offset + ({-1, 1})[math.random(2)], vel = 0.3 + math.random() * 0.2, gate = 0.15}
+      end
+    end
+  end
+
+  return p
+end
+
+local function gen_halftime(intensity)
+  local p = {}
+  local int = intensity / 10
+
+  -- very sparse: strong hit on 1 with long sustain
+  p[1] = {offset = 0, vel = 1.0, gate = 0.9}
+
+  -- maybe a second hit way later (feels like half-speed)
+  if math.random() < 0.5 then
+    p[9] = {offset = 0, vel = 0.8, gate = 0.8}
+  end
+
+  -- at higher intensity, one fill note near end
+  if int > 0.5 and math.random() < 0.4 then
+    local pos = ({13, 14, 15})[math.random(3)]
+    p[pos] = {
+      offset = pick_interval(8),
+      vel = 0.5 + math.random() * 0.3,
+      gate = 0.3,
+    }
+  end
+
+  -- rare octave drop anticipation
+  if math.random() < 0.25 then
+    p[16] = {offset = -12, vel = 0.65, gate = 0.2}
+  end
+
+  return p
+end
+
+local function gen_latin(intensity)
+  local p = {}
+  local int = intensity / 10
+
+  -- tumbao: the anticipated bass pattern
+  -- classic feel: and-of-2 (step 5), beat 3 (step 9), and-of-4 (step 13)
+  p[5] = {offset = pick_interval(9), vel = 0.8 + math.random() * 0.15, gate = 0.35}
+  p[9] = {offset = 0, vel = 0.9 + math.random() * 0.1, gate = 0.4}
+  p[13] = {offset = pick_interval(9), vel = 0.75 + math.random() * 0.2, gate = 0.3}
+
+  -- anticipated downbeat (step 16 leads into next bar's 1)
+  if math.random() < 0.65 then
+    p[16] = {offset = 0, vel = 0.85, gate = 0.25}
+  end
+
+  -- beat 1 anchor (sometimes absent in tumbao for tension)
+  if math.random() < 0.6 then
+    p[1] = {offset = 0, vel = 0.85 + math.random() * 0.1, gate = 0.35}
+  end
+
+  -- chromatic approaches at higher intensity
+  if int > 0.5 then
+    if not p[4] and math.random() < 0.4 then
+      p[4] = {offset = chromatic_approach(), vel = 0.4 + math.random() * 0.2, gate = 0.12}
+    end
+    if not p[12] and math.random() < 0.35 then
+      p[12] = {offset = chromatic_approach(), vel = 0.4 + math.random() * 0.2, gate = 0.12}
+    end
+  end
+
+  -- ghost notes for deeper groove
+  if int > 0.6 then
+    for i = 1, 16 do
+      if not p[i] and math.random() < (int - 0.5) * 0.12 then
+        p[i] = {offset = 0, vel = 0.12 + math.random() * 0.15, gate = 0.08}
+      end
+    end
+  end
+
+  return p
+end
+
 ---------- PATTERN MANAGEMENT ----------
 
-local generators = {gen_funk, gen_rock, gen_acid, gen_dub, gen_chaos}
+local generators = {gen_funk, gen_rock, gen_acid, gen_dub, gen_chaos, gen_hiphop, gen_shuffle, gen_halftime, gen_latin}
 
 function b.generate_pattern()
   b.pattern = generators[b.style](b.intensity)
@@ -349,11 +517,11 @@ function b.advance()
     local energy_scale = b.breathing and (0.3 + 0.7 * b.energy) or 1
     local vel = util.clamp(event.vel * (b.intensity / 10 + 0.4) * energy_scale, 0.08, 1.0)
 
-    -- apply slide: set glide before note
+    -- apply glide: respect mode's base glide + slide flag
     if event.slide then
-      engine.glide(0.12)
+      engine.glide(math.max(0.1, b.mode_glide * 1.5))
     else
-      engine.glide(0)
+      engine.glide(b.mode_glide)
     end
 
     if b.note_on_fn then
@@ -412,18 +580,30 @@ function b.advance()
       end
     end
 
-    -- pattern evolution
-    if b.bar % b.phrase_len == 0 then
-      -- phrase boundary: bigger change
-      if math.random() < 0.35 then
-        b.generate_pattern()
-      else
+    -- pattern evolution (skip if locked)
+    if not b.locked then
+      if b.favorites_mode and #b.favorites > 0 then
+        -- scroll through saved favorites at phrase boundaries
+        if b.bar % b.phrase_len == 0 then
+          if b.favorites_order == "random" then
+            b.favorites_idx = math.random(#b.favorites)
+          else
+            b.favorites_idx = (b.favorites_idx % #b.favorites) + 1
+          end
+          b.pattern = b.deep_copy_pattern(b.favorites[b.favorites_idx])
+        end
+      elseif b.bar % b.phrase_len == 0 then
+        -- phrase boundary: bigger change
+        if math.random() < 0.35 then
+          b.generate_pattern()
+        else
+          b.mutate_pattern()
+          b.mutate_pattern()
+        end
+      elseif b.bar % 2 == 0 then
+        -- every 2 bars: subtle mutation
         b.mutate_pattern()
-        b.mutate_pattern() -- double mutation for more change
       end
-    elseif b.bar % 2 == 0 then
-      -- every 2 bars: subtle mutation
-      b.mutate_pattern()
     end
   end
 end
@@ -457,7 +637,7 @@ end
 ---------- CONFIG ----------
 
 function b.set_style(style_num)
-  b.style = util.clamp(style_num, 1, 5)
+  b.style = util.clamp(style_num, 1, #b.STYLE_NAMES)
   b.generate_pattern()
 end
 
@@ -472,6 +652,95 @@ function b.init(note_on_fn, note_off_fn, root, scale_name)
   b.root = root or 36
   b.set_scale(b.root, scale_name or "Minor Pentatonic")
   b.generate_pattern()
+end
+
+---------- PATTERN PERSISTENCE ----------
+
+function b.deep_copy_pattern(src)
+  local dst = {}
+  for k, v in pairs(src) do
+    if type(v) == "table" then
+      dst[k] = {}
+      for kk, vv in pairs(v) do dst[k][kk] = vv end
+    else
+      dst[k] = v
+    end
+  end
+  return dst
+end
+
+function b.save_pattern(slot, data_dir)
+  if not data_dir then return end
+  local path = data_dir .. "patterns/"
+  util.make_dir(path)
+  -- serialize pattern as a flat string we can reload
+  local f = io.open(path .. string.format("slot_%02d.dat", slot), "w")
+  if not f then return end
+  for step = 1, 16 do
+    local e = b.pattern[step]
+    if e then
+      f:write(string.format("%d,%f,%f,%f,%s\n",
+        step, e.offset or 0, e.vel or 0.5, e.gate or 0.3, e.slide and "1" or "0"))
+    end
+  end
+  f:close()
+end
+
+function b.load_pattern(slot, data_dir)
+  if not data_dir then return nil end
+  local path = data_dir .. "patterns/" .. string.format("slot_%02d.dat", slot)
+  local f = io.open(path, "r")
+  if not f then return nil end
+  local p = {}
+  for line in f:lines() do
+    local step, offset, vel, gate, slide = line:match("(%d+),([%-%.%d]+),([%.%d]+),([%.%d]+),(%d)")
+    if step then
+      p[tonumber(step)] = {
+        offset = tonumber(offset),
+        vel = tonumber(vel),
+        gate = tonumber(gate),
+        slide = slide == "1",
+      }
+    end
+  end
+  f:close()
+  return p
+end
+
+function b.load_all_favorites(data_dir)
+  b.favorites = {}
+  if not data_dir then return end
+  for slot = 1, 32 do
+    local p = b.load_pattern(slot, data_dir)
+    if p and next(p) then
+      table.insert(b.favorites, p)
+    end
+  end
+end
+
+function b.save_to_next_slot(data_dir)
+  if not data_dir then return 0 end
+  -- find next empty slot
+  for slot = 1, 32 do
+    local path = data_dir .. "patterns/" .. string.format("slot_%02d.dat", slot)
+    local f = io.open(path, "r")
+    if f then
+      f:close()
+    else
+      b.save_pattern(slot, data_dir)
+      -- add to favorites
+      table.insert(b.favorites, b.deep_copy_pattern(b.pattern))
+      return slot
+    end
+  end
+  -- all full, overwrite slot 32
+  b.save_pattern(32, data_dir)
+  return 32
+end
+
+function b.toggle_lock()
+  b.locked = not b.locked
+  return b.locked
 end
 
 return b

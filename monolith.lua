@@ -75,6 +75,11 @@ local midi_out_device
 local midi_in_channel = 1
 local midi_out_channel = 1
 local screen_metro
+local data_dir -- set in init()
+
+-- snapshots
+local snapshot_slots = {} -- which slots have data (boolean array)
+local SNAPSHOT_COUNT = 32
 
 ---------- VOICE MODES ----------
 -- each mode: base engine params, macro morph targets (lo/hi),
@@ -275,6 +280,25 @@ local MODES = {
   },
 }
 
+---------- VELOCITY CURVES ----------
+-- per-mode velocity response. some modes want sensitive dynamics,
+-- others want compressed always-heavy response.
+
+local VEL_CURVES = {
+  function(v) return 0.7 + v * 0.3 end,   -- 1 SUB DESTROY: always heavy
+  function(v) return v end,                 -- 2 FUNK STAB: full sensitivity
+  function(v) return 0.3 + v * 0.7 end,   -- 3 ACID MORPH: slight compress
+  function(v) return 0.6 + v * 0.4 end,   -- 4 DIST WALL: always loud
+  function(v) return 0.4 + v * 0.6 end,   -- 5 VOWEL BOT: moderate
+  function(v) return 0.35 + v * 0.65 end, -- 6 GNARLY: floor + sensitive
+}
+
+local function apply_vel_curve(vel)
+  local curve = VEL_CURVES[voice_mode]
+  if curve then return curve(vel) end
+  return vel
+end
+
 ---------- DESTROY (D-inspired) ----------
 -- destruction layer: applied on top of any voice mode.
 -- inspired by justmat's "d" script (decimate, distort, disintegrate).
@@ -344,6 +368,8 @@ local function apply_voice(mode_num)
   local mode = MODES[voice_mode]
   apply_engine_params(mode.base)
   apply_macro_val(macro)
+  -- pass mode glide to bandmate
+  bandmate.mode_glide = mode.base.glide or 0
 end
 
 ---------- MODE MORPH ----------
@@ -490,9 +516,302 @@ local function morph_stop()
   end
 end
 
+---------- SNAPSHOTS ----------
+
+local function snapshot_capture()
+  local mode = MODES[voice_mode]
+  local state = {voice_mode = voice_mode, macro = macro, filter_cutoff = filter_base, destroy = destroy}
+  -- capture computed engine state
+  state.engine = {}
+  for name, val in pairs(mode.base) do
+    state.engine[name] = val
+  end
+  -- apply macro on top
+  if mode.macro_targets then
+    for name, range in pairs(mode.macro_targets) do
+      state.engine[name] = range[1] + (range[2] - range[1]) * macro
+    end
+  end
+  return state
+end
+
+local function snapshot_save(slot)
+  if not data_dir then return end
+  local path = data_dir .. "snapshots/"
+  util.make_dir(path)
+  local state = snapshot_capture()
+  local f = io.open(path .. string.format("slot_%02d.dat", slot), "w")
+  if not f then return end
+  f:write(string.format("voice_mode=%d\n", state.voice_mode))
+  f:write(string.format("macro=%f\n", state.macro))
+  f:write(string.format("filter_cutoff=%f\n", state.filter_cutoff))
+  f:write(string.format("destroy=%f\n", state.destroy))
+  for name, val in pairs(state.engine) do
+    f:write(string.format("e_%s=%f\n", name, val))
+  end
+  f:close()
+  snapshot_slots[slot] = true
+  print("monolith: snapshot saved to slot " .. slot)
+end
+
+local function snapshot_load(slot)
+  if not data_dir then return end
+  local path = data_dir .. "snapshots/" .. string.format("slot_%02d.dat", slot)
+  local f = io.open(path, "r")
+  if not f then return end
+  local state = {engine = {}}
+  for line in f:lines() do
+    local k, v = line:match("^(.-)=(.+)$")
+    if k and v then
+      if k == "voice_mode" then state.voice_mode = tonumber(v)
+      elseif k == "macro" then state.macro = tonumber(v)
+      elseif k == "filter_cutoff" then state.filter_cutoff = tonumber(v)
+      elseif k == "destroy" then state.destroy = tonumber(v)
+      elseif k:sub(1,2) == "e_" then
+        state.engine[k:sub(3)] = tonumber(v)
+      end
+    end
+  end
+  f:close()
+  -- apply
+  if state.voice_mode then
+    voice_mode = state.voice_mode
+    params:set("voice_mode", voice_mode, true) -- silent
+  end
+  if state.engine then apply_engine_params(state.engine) end
+  if state.macro then macro = state.macro; params:set("macro", macro, true) end
+  if state.filter_cutoff then
+    filter_base = state.filter_cutoff
+    engine.lpFilterCutoff(filter_base)
+  end
+  if state.destroy then
+    destroy = state.destroy
+    params:set("destroy", destroy, true)
+    apply_destroy_layer()
+  end
+  print("monolith: snapshot loaded from slot " .. slot)
+end
+
+local function snapshot_scan()
+  snapshot_slots = {}
+  if not data_dir then return end
+  for slot = 1, SNAPSHOT_COUNT do
+    local path = data_dir .. "snapshots/" .. string.format("slot_%02d.dat", slot)
+    local f = io.open(path, "r")
+    if f then f:close(); snapshot_slots[slot] = true end
+  end
+end
+
+---------- GRID ----------
+
+local g = grid.connect()
+local grid_dirty = true
+local grid_page = 1
+local grid_clock_id = nil
+local grid_held = {} -- held grid note keys
+local grid_note_map = {} -- [row][col] = midi note
+
+local function build_grid_note_map()
+  grid_note_map = {}
+  local scale = musicutil.generate_scale(root_note - 24, SCALE_NAMES[scale_type], 7)
+  -- rows 4-8: 5 playable rows, row 8=lowest, row 4=highest
+  for row = 4, 8 do
+    grid_note_map[row] = {}
+    local oct_offset = (8 - row) * #musicutil.generate_scale(0, SCALE_NAMES[scale_type], 1)
+    for col = 1, 16 do
+      local idx = oct_offset + col
+      if idx >= 1 and idx <= #scale then
+        grid_note_map[row][col] = scale[idx]
+      end
+    end
+  end
+end
+
+local function grid_redraw()
+  if not g.device then return end
+  g:all(0)
+
+  if grid_page == 1 then
+    ---- PAGE 1: PERFORM ----
+
+    -- row 1: mode select (1-6) + morph (8) + destroy bar (10-16)
+    for i = 1, NUM_MODES do
+      g:led(i, 1, (morph_active and morph_current or voice_mode) == i and 15 or 3)
+    end
+    g:led(8, 1, morph_active and 12 or 2)
+    for i = 10, 16 do
+      local lvl = (i - 10) / 6
+      g:led(i, 1, destroy >= lvl and (math.floor(4 + destroy * 11)) or 1)
+    end
+
+    -- row 2: bandmate style (1-9) + on/off (11) + lock (13) + save (15) + page (16)
+    for i = 1, #bandmate.STYLE_NAMES do
+      g:led(i, 2, bandmate.style == i and 12 or 2)
+    end
+    g:led(11, 2, bandmate_active and 12 or 2)
+    g:led(13, 2, bandmate.locked and 15 or 2)
+    g:led(15, 2, 4)
+    g:led(16, 2, 6) -- page toggle
+
+    -- row 3: pattern viz (16 steps)
+    for i = 1, 16 do
+      local e = bandmate.pattern[i]
+      if e then
+        local bright = math.floor(e.vel * 10) + 2
+        if bandmate.playing and bandmate.step == i then bright = 15 end
+        g:led(i, 3, math.min(15, bright))
+      else
+        g:led(i, 3, bandmate.playing and bandmate.step == i and 6 or 0)
+      end
+    end
+
+    -- rows 4-8: playable scale pad
+    for row = 4, 8 do
+      if grid_note_map[row] then
+        for col = 1, 16 do
+          local note = grid_note_map[row][col]
+          if note then
+            local key = row .. "_" .. col
+            if grid_held[key] then
+              g:led(col, row, 15)
+            elseif note % 12 == root_note % 12 then
+              g:led(col, row, 8) -- root note highlighted
+            else
+              g:led(col, row, 3) -- scale note dim
+            end
+          end
+        end
+      end
+    end
+
+  else
+    ---- PAGE 2: BANKS ----
+
+    -- rows 1-2: pattern slots (32)
+    for slot = 1, 32 do
+      local col = ((slot - 1) % 16) + 1
+      local row = slot <= 16 and 1 or 2
+      local has = bandmate.favorites[slot] and true or false
+      -- check disk too
+      if not has and data_dir then
+        local path = data_dir .. "patterns/" .. string.format("slot_%02d.dat", slot)
+        local f = io.open(path, "r")
+        if f then f:close(); has = true end
+      end
+      g:led(col, row, has and 8 or 1)
+    end
+
+    -- rows 3-4: snapshot slots (32)
+    for slot = 1, 32 do
+      local col = ((slot - 1) % 16) + 1
+      local row = slot <= 16 and 3 or 4
+      g:led(col, row, snapshot_slots[slot] and 8 or 1)
+    end
+
+    -- row 5: favorites controls
+    g:led(1, 5, bandmate.favorites_mode and 12 or 3) -- fav mode
+    g:led(3, 5, bandmate.favorites_order == "sequential" and 12 or 3)
+    g:led(5, 5, bandmate.favorites_order == "random" and 12 or 3)
+
+    -- row 8: page toggle
+    g:led(16, 8, 6)
+  end
+
+  g:refresh()
+end
+
+g.key = function(x, y, z)
+  if z == 0 then
+    -- key release: note off for grid notes
+    if grid_page == 1 and y >= 4 and y <= 8 then
+      local key = y .. "_" .. x
+      local note = grid_held[key]
+      if note then
+        note_off(note)
+        grid_held[key] = nil
+      end
+    end
+    grid_dirty = true
+    return
+  end
+
+  -- key press (z == 1)
+  if grid_page == 1 then
+    if y == 1 then
+      if x >= 1 and x <= NUM_MODES then
+        params:set("voice_mode", x)
+      elseif x == 8 then
+        params:set("morph_on", morph_active and 1 or 2)
+      elseif x >= 10 and x <= 16 then
+        local d = (x - 10) / 6
+        params:set("destroy", d)
+      end
+    elseif y == 2 then
+      if x >= 1 and x <= #bandmate.STYLE_NAMES then
+        params:set("bm_style", x)
+      elseif x == 11 then
+        params:set("bandmate_on", bandmate_active and 1 or 2)
+      elseif x == 13 then
+        bandmate.toggle_lock()
+        params:set("bm_lock", bandmate.locked and 2 or 1, true)
+      elseif x == 15 then
+        local slot = bandmate.save_to_next_slot(data_dir)
+        print("monolith: pattern saved to slot " .. slot)
+      elseif x == 16 then
+        grid_page = 2
+      end
+    elseif y >= 4 and y <= 8 then
+      -- note pad
+      if grid_note_map[y] and grid_note_map[y][x] then
+        local note = grid_note_map[y][x]
+        local key = y .. "_" .. x
+        grid_held[key] = note
+        note_on(note, 0.85)
+      end
+    end
+
+  elseif grid_page == 2 then
+    if y == 1 or y == 2 then
+      -- pattern slot
+      local slot = (y - 1) * 16 + x
+      local p = bandmate.load_pattern(slot, data_dir)
+      if p and next(p) then
+        bandmate.pattern = p
+        bandmate.locked = true
+        params:set("bm_lock", 2, true)
+        print("monolith: loaded pattern slot " .. slot)
+      end
+    elseif y == 3 or y == 4 then
+      -- snapshot slot
+      local slot = (y - 3) * 16 + x
+      if snapshot_slots[slot] then
+        snapshot_load(slot)
+      else
+        snapshot_save(slot)
+      end
+    elseif y == 5 then
+      if x == 1 then
+        bandmate.favorites_mode = not bandmate.favorites_mode
+        params:set("bm_fav_mode", bandmate.favorites_mode and 2 or 1, true)
+      elseif x == 3 then
+        bandmate.favorites_order = "sequential"
+        params:set("bm_fav_order", 1, true)
+      elseif x == 5 then
+        bandmate.favorites_order = "random"
+        params:set("bm_fav_order", 2, true)
+      end
+    elseif y == 8 and x == 16 then
+      grid_page = 1
+    end
+  end
+
+  grid_dirty = true
+end
+
 ---------- NOTE HANDLING ----------
 
 local function note_on(note, vel)
+  vel = apply_vel_curve(vel)
   local freq = musicutil.note_num_to_freq(note)
   engine.noteOn(note, freq, vel)
   current_notes[note] = vel
@@ -635,6 +954,27 @@ function init()
   params:add_number("bm_phrase", "phrase length", 2, 16, 4)
   params:set_action("bm_phrase", function(val) bandmate.phrase_len = val end)
 
+  params:add_option("bm_lock", "pattern lock", {"off", "on"}, 1)
+  params:set_action("bm_lock", function(val) bandmate.locked = val == 2 end)
+
+  params:add_option("bm_fav_mode", "favorites mode", {"off", "on"}, 1)
+  params:set_action("bm_fav_mode", function(val) bandmate.favorites_mode = val == 2 end)
+
+  params:add_option("bm_fav_order", "favorites order", {"sequential", "random"}, 1)
+  params:set_action("bm_fav_order", function(val)
+    bandmate.favorites_order = val == 1 and "sequential" or "random"
+  end)
+
+  params:add_number("bm_save_slot", "save pattern to slot", 1, 32, 1)
+
+  params:add_trigger("bm_save_now", ">> save pattern")
+  params:set_action("bm_save_now", function()
+    local slot = params:get("bm_save_slot")
+    bandmate.save_pattern(slot, data_dir)
+    table.insert(bandmate.favorites, bandmate.deep_copy_pattern(bandmate.pattern))
+    print("monolith: saved pattern to slot " .. slot)
+  end)
+
   -- music
   params:add_separator("MUSIC")
 
@@ -643,12 +983,16 @@ function init()
     root_note = val
     bandmate.root = val
     bandmate.set_scale(val, SCALE_NAMES[scale_type])
+    build_grid_note_map()
+    grid_dirty = true
   end)
 
   params:add_option("scale_type", "scale", SCALE_NAMES, 1)
   params:set_action("scale_type", function(val)
     scale_type = val
     bandmate.set_scale(root_note, SCALE_NAMES[val])
+    build_grid_note_map()
+    grid_dirty = true
   end)
 
   -- midi
@@ -674,6 +1018,21 @@ function init()
   params:add_number("midi_out_ch", "midi out ch", 1, 16, 1)
   params:set_action("midi_out_ch", function(val) midi_out_channel = val end)
 
+  -- snapshots
+  params:add_separator("SNAPSHOTS")
+
+  params:add_number("snap_slot", "slot", 1, 32, 1)
+
+  params:add_trigger("snap_save", ">> save snapshot")
+  params:set_action("snap_save", function()
+    snapshot_save(params:get("snap_slot"))
+  end)
+
+  params:add_trigger("snap_load", "<< load snapshot")
+  params:set_action("snap_load", function()
+    snapshot_load(params:get("snap_slot"))
+  end)
+
   -- compressor
   params:add_separator("COMPRESSOR")
   params:add_option("comp_on", "compressor", {"off", "on"}, 2)
@@ -685,6 +1044,12 @@ function init()
     end
   end)
 
+  -- data directories
+  data_dir = _path.data .. "monolith/"
+  util.make_dir(data_dir)
+  util.make_dir(data_dir .. "patterns/")
+  util.make_dir(data_dir .. "snapshots/")
+
   -- init hardware
   midi_in_device = midi.connect(1)
   midi_in_device.event = midi_event
@@ -692,6 +1057,11 @@ function init()
 
   -- init bandmate
   bandmate.init(note_on, note_off, root_note, SCALE_NAMES[scale_type])
+  bandmate.load_all_favorites(data_dir)
+
+  -- init snapshots + grid
+  snapshot_scan()
+  build_grid_note_map()
 
   -- compressor: on by default, use LEVELS menu to fine-tune
   pcall(audio.comp_on)
@@ -700,6 +1070,17 @@ function init()
   clock.run(function()
     clock.sleep(0.5)
     apply_voice(1)
+  end)
+
+  -- grid refresh clock
+  grid_clock_id = clock.run(function()
+    while true do
+      clock.sleep(1/30)
+      if grid_dirty and g.device then
+        grid_redraw()
+        grid_dirty = false
+      end
+    end
   end)
 
   -- screen metro
@@ -716,6 +1097,7 @@ function init()
         end
       end
     end
+    if bandmate_active then grid_dirty = true end
     redraw()
   end
   screen_metro:start()
@@ -887,5 +1269,6 @@ function cleanup()
   morph_stop()
   bandmate.stop()
   if screen_metro then screen_metro:stop() end
+  if grid_clock_id then clock.cancel(grid_clock_id) end
   pcall(audio.comp_off)
 end
