@@ -51,11 +51,14 @@ local morph_active = false
 local morph_mode_a = 1
 local morph_mode_b = 5
 local morph_rate = 4     -- index into MORPH_RATES
+local morph_style = 1    -- 1=A/B, 2=drift, 3=random
 local morph_blend = false -- false=hard cut, true=smooth
 local morph_clock_id = nil
 local morph_side = false  -- false=A, true=B
+local morph_current = 1   -- current mode in drift/random
 local MORPH_RATES = {1/16, 1/8, 1/4, 1/2, 1, 2, 4}
 local MORPH_RATE_NAMES = {"1/16", "1/8", "1/4", "1/2", "1", "2", "4"}
+local MORPH_STYLE_NAMES = {"A/B", "drift", "random"}
 
 -- destroy state
 local destroy = 0
@@ -373,29 +376,107 @@ local function morph_apply_blend(mix)
   apply_destroy_layer()
 end
 
+local function morph_pick_next_drift()
+  -- cycle through modes organically: mostly sequential,
+  -- sometimes skip one, occasionally jump
+  local next_mode
+  if math.random() < 0.65 then
+    -- sequential (forward or backward)
+    local dir = math.random() < 0.7 and 1 or -1
+    next_mode = ((morph_current - 1 + dir) % NUM_MODES) + 1
+  elseif math.random() < 0.7 then
+    -- skip one
+    local dir = math.random() < 0.5 and 2 or -2
+    next_mode = ((morph_current - 1 + dir) % NUM_MODES) + 1
+  else
+    -- random jump
+    next_mode = math.random(NUM_MODES)
+    if next_mode == morph_current then
+      next_mode = next_mode % NUM_MODES + 1
+    end
+  end
+  return next_mode
+end
+
+local function morph_pick_next_random()
+  local next_mode = math.random(NUM_MODES)
+  -- avoid repeating same mode twice
+  if next_mode == morph_current then
+    next_mode = next_mode % NUM_MODES + 1
+  end
+  return next_mode
+end
+
 local function morph_start()
   if morph_clock_id then return end
   morph_active = true
   morph_side = false
+  morph_current = voice_mode
   morph_clock_id = clock.run(function()
     while morph_active do
-      clock.sync(MORPH_RATES[morph_rate])
-      morph_side = not morph_side
-      if morph_blend then
-        -- smooth: 4-step interpolation across the beat
-        local from = morph_side and 0 or 1
-        local to = morph_side and 1 or 0
-        local steps = 4
-        for s = 1, steps do
-          local mix = from + (to - from) * (s / steps)
-          morph_apply_blend(mix)
-          clock.sync(MORPH_RATES[morph_rate] / steps)
+      local rate = MORPH_RATES[morph_rate]
+
+      if morph_style == 1 then
+        ---------- A/B: classic toggle ----------
+        clock.sync(rate)
+        morph_side = not morph_side
+        if morph_blend then
+          local from = morph_side and 0 or 1
+          local to = morph_side and 1 or 0
+          local steps = 4
+          for s = 1, steps do
+            local mix = from + (to - from) * (s / steps)
+            morph_apply_blend(mix)
+            clock.sync(rate / steps)
+          end
+        else
+          local target = morph_side and morph_mode_b or morph_mode_a
+          voice_mode = target
+          morph_current = target
+          apply_voice(target)
         end
+
+      elseif morph_style == 2 then
+        ---------- DRIFT: organic cycling ----------
+        -- variable hold time: 1x to 3x the rate (organic feel)
+        local hold = rate * (1 + math.random() * 2)
+        clock.sync(hold)
+        local prev = morph_current
+        morph_current = morph_pick_next_drift()
+        if morph_blend then
+          local steps = 6
+          for s = 1, steps do
+            local mix = s / steps
+            morph_mode_a = prev
+            morph_mode_b = morph_current
+            morph_apply_blend(mix)
+            clock.sync(rate / steps)
+          end
+        else
+          voice_mode = morph_current
+          apply_voice(morph_current)
+        end
+
       else
-        -- hard cut
-        local target = morph_side and morph_mode_b or morph_mode_a
-        voice_mode = target
-        apply_voice(target)
+        ---------- RANDOM: unpredictable ----------
+        -- random hold: 0.5x to 4x rate
+        local hold = rate * (0.5 + math.random() * 3.5)
+        clock.sync(hold)
+        local prev = morph_current
+        morph_current = morph_pick_next_random()
+        if morph_blend then
+          local steps = 4
+          for s = 1, steps do
+            local mix = s / steps
+            morph_mode_a = prev
+            morph_mode_b = morph_current
+            morph_apply_blend(mix)
+            clock.sync(rate / steps)
+          end
+        else
+          voice_mode = morph_current
+          apply_voice(morph_current)
+        end
       end
     end
   end)
@@ -506,6 +587,9 @@ function init()
   params:set_action("morph_on", function(val)
     if val == 2 then morph_start() else morph_stop() end
   end)
+
+  params:add_option("morph_style", "style", MORPH_STYLE_NAMES, 1)
+  params:set_action("morph_style", function(val) morph_style = val end)
 
   params:add_option("morph_mode_a", "mode A", MODE_NAMES, 1)
   params:set_action("morph_mode_a", function(val) morph_mode_a = val end)
@@ -686,12 +770,15 @@ function redraw()
   screen.level(15)
   screen.move(2, 18)
   if morph_active then
-    local side_name = morph_side and MODE_NAMES[morph_mode_b] or MODE_NAMES[morph_mode_a]
-    screen.text(side_name)
-    -- morph arrows
+    local cur = morph_style == 1
+      and (morph_side and MODE_NAMES[morph_mode_b] or MODE_NAMES[morph_mode_a])
+      or MODE_NAMES[morph_current]
+    screen.text(cur)
+    -- morph style indicator
     screen.level(6)
-    screen.move(screen.text_extents(side_name) + 6, 18)
-    screen.text("<>")
+    screen.move(screen.text_extents(cur) + 6, 18)
+    local tag = ({"<>", "~", "?"})[morph_style]
+    screen.text(tag)
   else
     screen.text(MODE_NAMES[voice_mode])
   end

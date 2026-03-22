@@ -29,6 +29,12 @@ b.current_note = nil
 b.note_on_fn = nil
 b.note_off_fn = nil
 
+-- breathing: long-form energy arc
+b.energy = 1.0      -- 0=silent, 1=full
+b.breathing = true   -- enable breathing
+b.breath_bar = 0     -- counter for breath cycle
+b.breath_phase = "play" -- "play", "fade", "silence", "build"
+
 ---------- NOTE SELECTION ----------
 
 local function pick_interval(style)
@@ -326,9 +332,22 @@ function b.advance()
 
   local event = b.pattern[b.step]
   if event then
+    -- breathing: skip notes when energy is low
+    if b.breathing and b.energy < 1 then
+      -- at energy 0: silence. at 0.5: skip ~50% of notes.
+      -- always keep the 1 (step 1) longer than other notes
+      local skip_chance = 1 - b.energy
+      if b.step ~= 1 and math.random() < skip_chance then
+        event = nil -- skip this note
+      end
+    end
+  end
+  if event then
     local note = b.root + event.offset
     note = util.clamp(note, 20, 96)
-    local vel = util.clamp(event.vel * (b.intensity / 10 + 0.4), 0.08, 1.0)
+    -- energy scales velocity down during low moments
+    local energy_scale = b.breathing and (0.3 + 0.7 * b.energy) or 1
+    local vel = util.clamp(event.vel * (b.intensity / 10 + 0.4) * energy_scale, 0.08, 1.0)
 
     -- apply slide: set glide before note
     if event.slide then
@@ -354,9 +373,46 @@ function b.advance()
     end
   end
 
-  -- end of bar: evolve
+  -- end of bar: evolve + breathe
   if b.step == 16 then
     b.bar = b.bar + 1
+    b.breath_bar = b.breath_bar + 1
+
+    -- breathing: creates silent/low moments in the song
+    if b.breathing then
+      if b.breath_phase == "play" then
+        -- playing normally. after 4-12 bars, maybe start fading
+        if b.breath_bar > 4 and math.random() < 0.15 then
+          b.breath_phase = "fade"
+          b.breath_bar = 0
+        end
+      elseif b.breath_phase == "fade" then
+        -- fading out over 2-4 bars
+        b.energy = math.max(0, b.energy - (0.25 + math.random() * 0.2))
+        if b.energy <= 0.05 then
+          b.breath_phase = "silence"
+          b.energy = 0
+          b.breath_bar = 0
+        end
+      elseif b.breath_phase == "silence" then
+        -- total silence for 1-4 bars
+        b.energy = 0
+        if b.breath_bar > 1 and math.random() < 0.4 then
+          b.breath_phase = "build"
+          b.breath_bar = 0
+        end
+      elseif b.breath_phase == "build" then
+        -- building back up over 2-4 bars
+        b.energy = math.min(1, b.energy + (0.2 + math.random() * 0.25))
+        if b.energy >= 0.95 then
+          b.breath_phase = "play"
+          b.energy = 1
+          b.breath_bar = 0
+        end
+      end
+    end
+
+    -- pattern evolution
     if b.bar % b.phrase_len == 0 then
       -- phrase boundary: bigger change
       if math.random() < 0.35 then
