@@ -43,12 +43,12 @@ return {
     ---------- PRIMARY: macro + destroy ----------
     destroy = {
       group = "timbral",
-      weight = 0.5,
-      sensitivity = 0.35,
+      weight = 0.6,
+      sensitivity = 0.45,
       direction = "both",
-      -- brief bursts only. conductor tames above 0.7.
+      -- conductor tames at chill/aggressive. chaotic: no limits.
       range_lo = 0,
-      range_hi = 0.5,
+      range_hi = 0.85,
     },
     macro = {
       group = "timbral",
@@ -62,23 +62,22 @@ return {
     ---------- TIMBRAL ----------
     filter_cutoff = {
       group = "timbral",
-      weight = 0.65,
-      sensitivity = 0.4,
+      weight = 0.7,
+      sensitivity = 0.5,
       direction = "both",
-      -- keep filter in musical range. extreme lows kill the bass,
-      -- extreme highs sound thin.
-      range_lo = 200,
-      range_hi = 4000,
+      -- wider range: conductor keeps chill/aggressive musical.
+      -- chaotic can go to extremes.
+      range_lo = 60,
+      range_hi = 8000,
     },
     lp_filter_resonance = {
       group = "timbral",
-      weight = 0.4,
-      sensitivity = 0.3,
+      weight = 0.5,
+      sensitivity = 0.4,
       direction = "both",
-      -- resonance above 0.5 = screaming wah. keep it musical.
-      -- conductor also tames this above 0.65.
+      -- conductor tames at chill/aggressive. chaotic: howls.
       range_lo = 0,
-      range_hi = 0.55,
+      range_hi = 0.85,
     },
     chorus_mix = {
       group = "timbral",
@@ -88,21 +87,20 @@ return {
     },
     ring_mod_mix = {
       group = "timbral",
-      weight = 0.3,
-      sensitivity = 0.2,
+      weight = 0.4,
+      sensitivity = 0.3,
       direction = "up",
-      -- ring mod is HARSH. use sparingly — brief moments of grit.
-      -- conductor also tames this above 0.4.
+      -- conductor tames at chill/aggressive. chaotic: screams.
       range_lo = 0,
-      range_hi = 0.35,
+      range_hi = 0.7,
     },
     ring_mod_freq = {
       group = "timbral",
-      weight = 0.25,
-      sensitivity = 0.3,
+      weight = 0.35,
+      sensitivity = 0.4,
       direction = "both",
-      range_lo = 40,
-      range_hi = 180,
+      range_lo = 20,
+      range_hi = 300,
     },
     sub_osc_level = {
       group = "timbral",
@@ -190,18 +188,17 @@ return {
     ---------- STRUCTURAL ----------
     voice_mode = {
       group = "structural",
-      weight = 0.12,
+      weight = 0.2,
       sensitivity = 1.0,
       direction = "both",
-      -- voice mode switches are BIG moments. very rare.
-      -- blocked entirely when morph is active.
+      -- rare at chill, more frequent at chaotic.
+      -- blocked when morph is active.
     },
     bm_style = {
       group = "structural",
-      weight = 0.1,
+      weight = 0.18,
       sensitivity = 1.0,
       direction = "both",
-      -- bandmate style changes are disruptive. keep rare.
     },
     bm_phrase = {
       group = "structural",

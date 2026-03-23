@@ -251,7 +251,7 @@ local active_palette = nil  -- set when a scene is applied
 local last_form_phase = nil -- track phase changes for scale shifts
 
 -- scenes: full instrument presets that configure everything at once
-local SCENE_NAMES = {"(none)", "HIT", "SYNCOP", "CLUB", "MINIMAL", "HEAVY", "WEIRD"}
+local SCENE_NAMES = {"(none)", "HIT", "SYNCOP", "CLUB", "MINIMAL", "HEAVY", "WEIRD", "FERAL"}
 local SCENES = {
   -- 1: (none) = do nothing
   nil,
@@ -342,7 +342,27 @@ local SCENES = {
     stutter_enabled = 1, bass_drop_enabled = 1, time_warp_enabled = 1,
     morph_on = 1, arp_enabled = 1,
   },
+  -- 8: FERAL — lightning bolt meets squarepusher. no guardrails.
+  {
+    voice_mode = 5, macro = 0.7, destroy = 0.4,
+    bm_style = 5, bm_intensity = 9, bm_swing = 0.25, bm_phrase = 4,
+    bandmate_on = 2, doubling = 4, -- oct+5th for maximum weight
+    delay_on = 2, delay_feedback = 0.7, delay_level = 0.4,
+    harmonize_on = 2, harmonize_int = 3, -- 5th above
+    rev_level = 0.35, rev_size = 3, rev_damp = 10000,
+    stereo_width = 4, chord_mode = 2, chord_chance = 35,
+    bm_prog_mode = 2, bm_prog_type = 4, bm_prog_rate = 2, -- 12 bar blues, fast changes
+    scale_type = 3, bm_lock = 1, -- chromatic (no wrong notes when everything is wrong)
+    bm_form = 2, bm_form_type = 6, -- shuffle form (unpredictable)
+    robot_personality = 3, -- chaotic: conductor steps aside
+    stutter_enabled = 2, bass_drop_enabled = 2, time_warp_enabled = 2,
+    morph_on = 2, morph_style = 3, morph_rate = 2, -- random morph, fast
+    arp_enabled = 1,
+  },
 }
+
+-- add FERAL to scale palettes
+SCALE_PALETTES[8] = {home = 3, depart = 5, grow = 8, silence = 9}
 
 local function apply_scene(idx)
   if idx <= 1 or not SCENES[idx] then return end
@@ -405,35 +425,45 @@ local function start_conductor()
           end
 
         elseif phase == "grow" then
-          -- building: allow upward movement, nudge macro up
+          -- building: push energy up (harder at chaotic)
           local m = params:get("macro")
-          if m < 0.65 then params:set("macro", m + 0.015) end
+          local grow_rate = ({0.015, 0.03, 0.06})[robot_personality] or 0.03
+          if m < 0.85 then params:set("macro", m + grow_rate) end
+          -- chaotic: also push destroy during grow
+          if robot_personality == 3 then
+            local d = params:get("destroy")
+            if d < 0.6 then params:set("destroy", d + 0.03) end
+          end
 
         elseif phase == "depart" then
-          -- variation: allow more freedom but keep within bounds
-          local d = params:get("destroy")
-          if d > 0.6 then params:set("destroy", d * 0.92) end
+          -- variation: cap depends on personality
+          if robot_personality < 3 then
+            local d = params:get("destroy")
+            if d > 0.6 then params:set("destroy", d * 0.92) end
+          end
         end
       end
 
-      -- RING MOD / WAH TAMING: these are harsh, keep them musical
-      -- robot can push ring_mod_mix up but conductor pulls it back gently
-      local rm = params:get("ring_mod_mix") or 0
-      if rm > 0.4 then
-        -- ring mod above 0.4 gets harsh fast — pull back
-        params:set("ring_mod_mix", rm - (rm - 0.4) * tame * 2)
+      -- TAMING: pull harsh params back (SKIPPED entirely at chaotic)
+      if robot_personality < 3 then
+        local rm = params:get("ring_mod_mix") or 0
+        local rm_cap = robot_personality == 1 and 0.35 or 0.55
+        if rm > rm_cap then
+          params:set("ring_mod_mix", rm - (rm - rm_cap) * tame * 2)
+        end
+        local res = params:get("lp_filter_resonance") or 0
+        local res_cap = robot_personality == 1 and 0.5 or 0.7
+        if res > res_cap then
+          params:set("lp_filter_resonance", res - (res - res_cap) * tame * 2)
+        end
+        local destroy = params:get("destroy")
+        local dest_cap = robot_personality == 1 and 0.5 or 0.75
+        if destroy > dest_cap then
+          params:set("destroy", destroy - (destroy - dest_cap) * tame)
+        end
       end
-      local res = params:get("lp_filter_resonance") or 0
-      if res > 0.65 then
-        -- resonance above 0.65 = screaming wah — pull back
-        params:set("lp_filter_resonance", res - (res - 0.65) * tame * 2)
-      end
-
-      -- GENERAL TAMING: prevent params from going to extremes
-      local destroy = params:get("destroy")
-      if destroy > 0.7 then
-        params:set("destroy", destroy - (destroy - 0.7) * tame)
-      end
+      -- chaotic personality: no caps. ring mod screams. resonance howls.
+      -- destroy maxes. the conductor steps aside.
 
       -- SCALE SHIFTING: change scale based on form phase
       if active_palette and bandmate.form_enabled then
