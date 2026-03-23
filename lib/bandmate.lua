@@ -42,6 +42,16 @@ b.mode_glide = 0
 b.warp_rate = 1.0
 b.warp_active = false
 
+-- swing
+b.swing = 0 -- 0=straight, 0.67=triplet
+b.swing_count = 0
+
+-- chord progression
+b.progression_mode = false
+b.progression = {0, 5, 7, 0} -- I-IV-V-I in semitones
+b.progression_idx = 1
+b.progression_rate = 4 -- bars per chord change
+
 -- pattern lock + favorites
 b.locked = false
 b.favorites = {}
@@ -515,7 +525,8 @@ function b.advance()
     end
   end
   if event then
-    local note = b.root + event.offset
+    local prog_offset = b.progression_mode and (b.progression[b.progression_idx] or 0) or 0
+    local note = b.root + prog_offset + event.offset
     note = util.clamp(note, 20, 96)
     -- energy scales velocity down during low moments
     local energy_scale = b.breathing and (0.3 + 0.7 * b.energy) or 1
@@ -549,6 +560,13 @@ function b.advance()
   if b.step == 16 then
     b.bar = b.bar + 1
     b.breath_bar = b.breath_bar + 1
+
+    -- chord progression: advance at bar boundaries
+    if b.progression_mode and #b.progression > 0 then
+      if b.bar % b.progression_rate == 0 then
+        b.progression_idx = (b.progression_idx % #b.progression) + 1
+      end
+    end
 
     -- breathing: creates silent/low moments in the song
     if b.breathing then
@@ -618,9 +636,20 @@ function b.start()
   b.step = 0
   b.bar = 0
   b.generate_pattern()
+  b.swing_count = 0
   b.clock_id = clock.run(function()
     while b.playing do
-      clock.sync((1/4) * b.warp_rate) -- 16th note, stretched by warp
+      b.swing_count = b.swing_count + 1
+      local sw = b.swing
+      local base = (1/4) * b.warp_rate
+      -- swing: odd steps shorter, even steps longer
+      if sw > 0 and b.swing_count % 2 == 0 then
+        clock.sync(base * (1 + sw))
+      elseif sw > 0 then
+        clock.sync(base * (1 - sw))
+      else
+        clock.sync(base)
+      end
       b.advance()
     end
   end)

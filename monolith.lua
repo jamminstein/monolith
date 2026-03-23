@@ -98,8 +98,38 @@ local stutter_active = false
 local stutter_clock_id = nil
 local bass_drop_clock_id = nil
 
+-- doubling
+local doubling_mode = 1 -- 1=off, 2=oct below, 3=5th below, 4=oct+5th
+local doubled_notes = {} -- [original_note] = {extra_ids}
+
+-- arpeggiator
+local arp_on = false
+local arp_rate = 1
+local arp_style = 1 -- 1=up, 2=down, 3=up-down, 4=random
+local arp_range = 2
+local arp_clock_id = nil
+local arp_held_notes = {}
+local arp_playing_note = nil
+local arp_idx = 0
+local arp_direction = 1
+local ARP_RATES = {1/16, 1/8, 1/4, 1/2}
+local ARP_RATE_NAMES = {"1/16", "1/8", "1/4", "1/2"}
+local ARP_STYLE_NAMES = {"up", "down", "up-down", "random"}
+
+-- chord progressions
+local PROG_PRESETS = {
+  {name = "I-IV-V-I", prog = {0, 5, 7, 0}},
+  {name = "I-V-vi-IV", prog = {0, 7, 9, 5}},
+  {name = "I-IV-I-V", prog = {0, 5, 0, 7}},
+  {name = "12 bar blues", prog = {0,0,0,0, 5,5,0,0, 7,5,0,0}},
+  {name = "i-iv-v", prog = {0, 5, 7}},
+  {name = "i-VII-VI-v", prog = {0, 10, 8, 7}},
+}
+local PROG_NAMES = {}
+for _, p in ipairs(PROG_PRESETS) do table.insert(PROG_NAMES, p.name) end
+
 -- robot
-local robot_personality = 1 -- 1=chill, 2=aggressive, 3=chaotic
+local robot_personality = 1
 local PERSONALITY_NAMES = {"chill", "aggressive", "chaotic"}
 
 ---------- VOICE MODES ----------
@@ -1018,7 +1048,7 @@ g.key = function(x, y, z)
       local key = y .. "_" .. x
       local note = grid_held[key]
       if note then
-        note_off(note)
+        manual_note_off(note)
         grid_held[key] = nil
       end
     end
@@ -1080,7 +1110,7 @@ g.key = function(x, y, z)
         local note = grid_note_map[y][x]
         local key = y .. "_" .. x
         grid_held[key] = note
-        note_on(note, 0.85)
+        manual_note_on(note, 0.85)
       end
     end
 
@@ -1136,9 +1166,28 @@ local function note_on(note, vel)
     local h_note = note - harmonize_interval
     if h_note >= 20 and h_note <= 108 then
       local h_freq = musicutil.note_num_to_freq(h_note)
-      engine.noteOn(h_note + 1000, h_freq, vel * 0.6) -- offset ID to avoid collision
+      engine.noteOn(h_note + 1000, h_freq, vel * 0.6)
       harmony_notes[note] = h_note
     end
+  end
+  -- octave/5th doubling
+  if doubling_mode > 1 then
+    local extras = {}
+    if doubling_mode == 2 or doubling_mode == 4 then
+      local dn = note - 12
+      if dn >= 20 then
+        engine.noteOn(note + 2000, musicutil.note_num_to_freq(dn), vel * 0.5)
+        table.insert(extras, note + 2000)
+      end
+    end
+    if doubling_mode == 3 or doubling_mode == 4 then
+      local fn = note - 7
+      if fn >= 20 then
+        engine.noteOn(note + 3000, musicutil.note_num_to_freq(fn), vel * 0.45)
+        table.insert(extras, note + 3000)
+      end
+    end
+    if #extras > 0 then doubled_notes[note] = extras end
   end
   -- seismograph
   activity[act_head] = {vel = vel, age = 0}
@@ -1158,10 +1207,115 @@ local function note_off(note)
     engine.noteOff(harmony_notes[note] + 1000)
     harmony_notes[note] = nil
   end
+  -- doubled notes off
+  if doubled_notes[note] then
+    for _, id in ipairs(doubled_notes[note]) do engine.noteOff(id) end
+    doubled_notes[note] = nil
+  end
   if midi_out_device and params:get("midi_out") == 2 then
     midi_out_device:note_off(note, 0, midi_out_channel)
   end
   grid_dirty = true
+end
+
+---------- ARPEGGIATOR ----------
+
+local function build_arp_pattern()
+  -- build scale run from held notes
+  if #arp_held_notes == 0 then return {} end
+  local base = arp_held_notes[1]
+  local scale = musicutil.generate_scale(base, SCALE_NAMES[scale_type], arp_range)
+  if arp_style == 2 then
+    -- reverse for down
+    local rev = {}
+    for i = #scale, 1, -1 do table.insert(rev, scale[i]) end
+    return rev
+  end
+  return scale
+end
+
+local function arp_start()
+  if arp_clock_id then return end
+  arp_idx = 0
+  arp_direction = 1
+  arp_clock_id = clock.run(function()
+    while arp_on and #arp_held_notes > 0 do
+      local pattern = build_arp_pattern()
+      if #pattern == 0 then break end
+
+      -- advance index based on style
+      if arp_style == 4 then
+        -- random
+        arp_idx = math.random(#pattern)
+      elseif arp_style == 3 then
+        -- up-down
+        arp_idx = arp_idx + arp_direction
+        if arp_idx > #pattern then
+          arp_direction = -1
+          arp_idx = #pattern - 1
+        elseif arp_idx < 1 then
+          arp_direction = 1
+          arp_idx = 2
+        end
+        arp_idx = util.clamp(arp_idx, 1, #pattern)
+      else
+        -- up or down (already handled by pattern order)
+        arp_idx = (arp_idx % #pattern) + 1
+      end
+
+      -- play note
+      if arp_playing_note then note_off(arp_playing_note) end
+      local n = pattern[arp_idx]
+      if n then
+        note_on(n, 0.8)
+        arp_playing_note = n
+      end
+
+      clock.sync(ARP_RATES[arp_rate])
+    end
+    -- cleanup
+    if arp_playing_note then note_off(arp_playing_note); arp_playing_note = nil end
+    arp_clock_id = nil
+  end)
+end
+
+local function arp_stop()
+  arp_on = false
+  if arp_clock_id then
+    clock.cancel(arp_clock_id)
+    arp_clock_id = nil
+  end
+  if arp_playing_note then note_off(arp_playing_note); arp_playing_note = nil end
+  arp_held_notes = {}
+end
+
+-- manual_note_on/off: routes through arp for keyboard/grid input
+-- bandmate calls note_on/note_off directly (bypasses arp)
+local function manual_note_on(note, vel)
+  if arp_on then
+    -- add to arp held notes
+    for _, n in ipairs(arp_held_notes) do
+      if n == note then return end -- already held
+    end
+    table.insert(arp_held_notes, note)
+    if not arp_clock_id then arp_start() end
+  else
+    note_on(note, vel)
+  end
+end
+
+local function manual_note_off(note)
+  if arp_on then
+    for i, n in ipairs(arp_held_notes) do
+      if n == note then
+        table.remove(arp_held_notes, i)
+        break
+      end
+    end
+    -- if no more held notes, arp will stop naturally
+  else
+    note_off(note)
+  end
 end
 
 local function all_notes_off()
@@ -1181,9 +1335,9 @@ local function midi_event(data)
   if msg.ch ~= midi_in_channel then return end
 
   if msg.type == "note_on" and msg.vel > 0 then
-    note_on(msg.note, msg.vel / 127)
+    manual_note_on(msg.note, msg.vel / 127)
   elseif msg.type == "note_off" or (msg.type == "note_on" and msg.vel == 0) then
-    note_off(msg.note)
+    manual_note_off(msg.note)
   elseif msg.type == "cc" then
     if msg.cc == 1 then
       -- mod wheel -> macro
@@ -1305,6 +1459,25 @@ function init()
     print("monolith: saved pattern to slot " .. slot)
   end)
 
+  params:add_control("bm_swing", "swing",
+    controlspec.new(0, 0.7, 'lin', 0.01, 0))
+  params:set_action("bm_swing", function(val) bandmate.swing = val end)
+
+  params:add_option("bm_prog_mode", "chord progression", {"off", "on"}, 1)
+  params:set_action("bm_prog_mode", function(val)
+    bandmate.progression_mode = val == 2
+    bandmate.progression_idx = 1
+  end)
+
+  params:add_option("bm_prog_type", "progression", PROG_NAMES, 1)
+  params:set_action("bm_prog_type", function(val)
+    bandmate.progression = PROG_PRESETS[val].prog
+    bandmate.progression_idx = 1
+  end)
+
+  params:add_number("bm_prog_rate", "bars per chord", 1, 16, 4)
+  params:set_action("bm_prog_rate", function(val) bandmate.progression_rate = val end)
+
   -- music
   params:add_separator("MUSIC")
 
@@ -1401,6 +1574,28 @@ function init()
   params:add_option("bass_drop_enabled", "bass drop", {"off", "on"}, 2)
 
   params:add_option("time_warp_enabled", "time warp", {"off", "on"}, 2)
+
+  params:add_option("doubling", "note doubling",
+    {"off", "oct below", "5th below", "oct+5th"}, 1)
+  params:set_action("doubling", function(val) doubling_mode = val end)
+
+  params:add_option("arp_enabled", "arpeggiator", {"off", "on"}, 1)
+  params:set_action("arp_enabled", function(val)
+    if val == 2 then
+      arp_on = true
+    else
+      arp_stop()
+    end
+  end)
+
+  params:add_option("arp_rate", "arp rate", ARP_RATE_NAMES, 2)
+  params:set_action("arp_rate", function(val) arp_rate = val end)
+
+  params:add_option("arp_style", "arp style", ARP_STYLE_NAMES, 1)
+  params:set_action("arp_style", function(val) arp_style = val end)
+
+  params:add_number("arp_range", "arp range (oct)", 1, 3, 2)
+  params:set_action("arp_range", function(val) arp_range = val end)
 
   -- robot
   params:add_separator("ROBOT")
@@ -1642,6 +1837,7 @@ end
 
 function cleanup()
   all_notes_off()
+  arp_stop()
   morph_stop()
   bandmate.stop()
   if screen_metro then screen_metro:stop() end

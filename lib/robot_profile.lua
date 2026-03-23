@@ -29,6 +29,10 @@ return {
     "snap_load",
     "bm_save_slot",
     "bm_save_now",
+    "arp_rate",
+    "arp_style",
+    "arp_range",
+    "bm_prog_rate",
   },
 
   params = {
@@ -292,7 +296,41 @@ return {
       weight = 0.1,
       sensitivity = 1.0,
       direction = "both",
-      -- robot can shift its own personality. meta.
+    },
+    bm_swing = {
+      group = "rhythmic",
+      weight = 0.65,
+      sensitivity = 0.5,
+      direction = "both",
+      range_lo = 0,
+      range_hi = 0.6,
+      -- swing is the groove knob. robot should ride it.
+    },
+    bm_prog_mode = {
+      group = "structural",
+      weight = 0.2,
+      sensitivity = 1.0,
+      direction = "both",
+    },
+    bm_prog_type = {
+      group = "structural",
+      weight = 0.15,
+      sensitivity = 1.0,
+      direction = "both",
+    },
+    doubling = {
+      group = "structural",
+      weight = 0.15,
+      sensitivity = 1.0,
+      direction = "both",
+      -- doubling is dramatic. use sparingly for big moments.
+    },
+    arp_enabled = {
+      group = "structural",
+      weight = 0.1,
+      sensitivity = 1.0,
+      direction = "both",
+      -- arp is player territory. robot should barely touch this.
     },
   },
 }
