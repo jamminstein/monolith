@@ -594,7 +594,8 @@ function b.advance()
     end
 
     -- breathing: creates silent/low moments in the song
-    if b.breathing then
+    -- DISABLED when form is active (form owns energy via silence/grow phases)
+    if b.breathing and not b.form_enabled then
       if b.breath_phase == "play" then
         -- playing normally. after 12-24 bars, maybe start fading
         if b.breath_bar > 12 and math.random() < 0.08 then

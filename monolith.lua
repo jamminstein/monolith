@@ -219,8 +219,10 @@ local SCENES = {
 local function apply_scene(idx)
   if idx <= 1 or not SCENES[idx] then return end
   local s = SCENES[idx]
+  -- save scene values as anchors for conductor taming
+  scene_anchors = {}
   for k, v in pairs(s) do
-    -- try to set as param (silently skip if not found)
+    scene_anchors[k] = v
     pcall(function() params:set(k, v) end)
   end
 end
@@ -228,6 +230,90 @@ end
 -- robot
 local robot_personality = 1
 local PERSONALITY_NAMES = {"chill", "aggressive", "chaotic"}
+
+---------- CONDUCTOR ----------
+-- coordinates robot, bandmate, form, breathing, morph, and personality
+-- prevents systems from fighting each other
+local conductor_clock_id = nil
+local scene_anchors = nil  -- original scene param values for taming
+
+local function start_conductor()
+  if conductor_clock_id then return end
+  conductor_clock_id = clock.run(function()
+    while true do
+      clock.sync(4) -- check every bar
+
+      -- personality taming strength: how hard we pull back to musicality
+      -- chill=strong pull, aggressive=moderate, chaotic=minimal
+      local tame = ({0.25, 0.08, 0.02})[robot_personality] or 0.08
+
+      -- FORM-AWARENESS: adjust params to match what the bandmate is doing
+      if bandmate.form_enabled then
+        local phase = bandmate.form_phase
+
+        if phase == "silence" then
+          -- quiet moment: pull down energy-related params
+          local m = params:get("macro")
+          if m > 0.15 then params:set("macro", m * 0.85) end
+          local d = params:get("destroy")
+          if d > 0.03 then params:set("destroy", d * 0.7) end
+          local rl = params:get("rev_level")
+          if rl > 0.1 then params:set("rev_level", rl * 0.9) end
+
+        elseif phase == "home" then
+          -- home theme: stabilize toward scene anchors
+          if scene_anchors then
+            for _, name in ipairs({"macro", "destroy", "rev_level",
+                                    "bm_swing", "rev_size"}) do
+              if scene_anchors[name] then
+                local cur = params:get(name)
+                local target = scene_anchors[name]
+                params:set(name, cur + (target - cur) * tame)
+              end
+            end
+          end
+
+        elseif phase == "grow" then
+          -- building: allow upward movement, nudge macro up
+          local m = params:get("macro")
+          if m < 0.65 then params:set("macro", m + 0.015) end
+
+        elseif phase == "depart" then
+          -- variation: allow more freedom but keep within bounds
+          local d = params:get("destroy")
+          if d > 0.6 then params:set("destroy", d * 0.92) end
+        end
+      end
+
+      -- RING MOD / WAH TAMING: these are harsh, keep them musical
+      -- robot can push ring_mod_mix up but conductor pulls it back gently
+      local rm = params:get("ring_mod_mix") or 0
+      if rm > 0.4 then
+        -- ring mod above 0.4 gets harsh fast — pull back
+        params:set("ring_mod_mix", rm - (rm - 0.4) * tame * 2)
+      end
+      local res = params:get("lp_filter_resonance") or 0
+      if res > 0.65 then
+        -- resonance above 0.65 = screaming wah — pull back
+        params:set("lp_filter_resonance", res - (res - 0.65) * tame * 2)
+      end
+
+      -- GENERAL TAMING: prevent params from going to extremes
+      local destroy = params:get("destroy")
+      if destroy > 0.7 then
+        params:set("destroy", destroy - (destroy - 0.7) * tame)
+      end
+
+    end
+  end)
+end
+
+local function stop_conductor()
+  if conductor_clock_id then
+    clock.cancel(conductor_clock_id)
+    conductor_clock_id = nil
+  end
+end
 
 ---------- VOICE MODES ----------
 -- each mode: base engine params, macro morph targets (lo/hi),
@@ -1470,6 +1556,8 @@ function init()
 
   params:add_option("voice_mode", "voice mode", MODE_NAMES, 1)
   params:set_action("voice_mode", function(val)
+    -- block voice_mode changes during active morph (morph owns the voice)
+    if morph_active then return end
     apply_voice(val)
   end)
 
@@ -1784,6 +1872,9 @@ function init()
     apply_voice(1)
   end)
 
+  -- start conductor (coordinates robot, form, personality, effects)
+  start_conductor()
+
   -- grid refresh clock
   grid_clock_id = clock.run(function()
     while true do
@@ -1980,6 +2071,7 @@ function cleanup()
   all_notes_off()
   arp_stop()
   morph_stop()
+  stop_conductor()
   bandmate.stop()
   if screen_metro then screen_metro:stop() end
   if grid_clock_id then clock.cancel(grid_clock_id) end

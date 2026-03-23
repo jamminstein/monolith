@@ -2,13 +2,17 @@
 -- engine: MollyThePoly
 -- brutal bass instrument with 6 voice modes and bandmate engine
 --
--- robot strategy: the macro knob is the main lever. robot should ride it
--- like a DJ rides a filter — slow builds, sudden drops, tension and release.
--- voice mode switches are dramatic structural moments (use sparingly).
--- the destroy knob is the wildcard — robot can push it for D-style decimation
--- moments then pull back to clean. morph between modes for rapid texture shifts.
--- the bass should BREATHE — alternate between sub-heavy quiet and
--- gnarly aggressive peaks. never settle.
+-- robot strategy: MUSICAL FIRST. the conductor clock in monolith.lua
+-- coordinates robot changes with bandmate form, breathing, and personality.
+--
+-- macro is the main lever — ride it like a DJ rides a filter.
+-- destroy is a BRIEF weapon — conductor tames it above 0.7.
+-- ring mod and resonance are HARSH — kept to low ranges.
+-- voice mode and bandmate style are RARE structural shifts.
+-- the conductor pulls params back toward scene anchors during "home" phases,
+-- quiets everything during "silence", and blocks voice changes during morph.
+--
+-- personality scales everything: chill=strong taming, aggressive=moderate, chaotic=free.
 
 return {
   name = "monolith",
@@ -39,14 +43,12 @@ return {
     ---------- PRIMARY: macro + destroy ----------
     destroy = {
       group = "timbral",
-      weight = 0.8,
-      sensitivity = 0.6,
+      weight = 0.5,
+      sensitivity = 0.35,
       direction = "both",
-      -- D-style decimation layer. robot should use this for
-      -- brief bursts of chaos, not sustained destruction.
-      -- push it up fast, pull back slow. dramatic weapon.
+      -- brief bursts only. conductor tames above 0.7.
       range_lo = 0,
-      range_hi = 0.85,
+      range_hi = 0.5,
     },
     macro = {
       group = "timbral",
@@ -60,19 +62,23 @@ return {
     ---------- TIMBRAL ----------
     filter_cutoff = {
       group = "timbral",
-      weight = 0.85,
-      sensitivity = 0.6,
+      weight = 0.65,
+      sensitivity = 0.4,
       direction = "both",
-      range_lo = 40,
-      range_hi = 10000,
+      -- keep filter in musical range. extreme lows kill the bass,
+      -- extreme highs sound thin.
+      range_lo = 200,
+      range_hi = 4000,
     },
     lp_filter_resonance = {
       group = "timbral",
-      weight = 0.7,
-      sensitivity = 0.5,
+      weight = 0.4,
+      sensitivity = 0.3,
       direction = "both",
+      -- resonance above 0.5 = screaming wah. keep it musical.
+      -- conductor also tames this above 0.65.
       range_lo = 0,
-      range_hi = 0.9,
+      range_hi = 0.55,
     },
     chorus_mix = {
       group = "timbral",
@@ -82,20 +88,21 @@ return {
     },
     ring_mod_mix = {
       group = "timbral",
-      weight = 0.6,
-      sensitivity = 0.4,
+      weight = 0.3,
+      sensitivity = 0.2,
       direction = "up",
-      -- ring mod adds the gnarly. robot should push it up for aggression.
+      -- ring mod is HARSH. use sparingly — brief moments of grit.
+      -- conductor also tames this above 0.4.
       range_lo = 0,
-      range_hi = 0.8,
+      range_hi = 0.35,
     },
     ring_mod_freq = {
       group = "timbral",
-      weight = 0.5,
-      sensitivity = 0.5,
+      weight = 0.25,
+      sensitivity = 0.3,
       direction = "both",
-      range_lo = 20,
-      range_hi = 280,
+      range_lo = 40,
+      range_hi = 180,
     },
     sub_osc_level = {
       group = "timbral",
@@ -105,11 +112,12 @@ return {
     },
     noise_level = {
       group = "timbral",
-      weight = 0.35,
-      sensitivity = 0.3,
+      weight = 0.2,
+      sensitivity = 0.2,
       direction = "up",
+      -- noise adds hiss/texture. keep subtle.
       range_lo = 0,
-      range_hi = 0.45,
+      range_hi = 0.2,
     },
     amp_mod = {
       group = "timbral",
@@ -182,17 +190,18 @@ return {
     ---------- STRUCTURAL ----------
     voice_mode = {
       group = "structural",
-      weight = 0.3,
+      weight = 0.12,
       sensitivity = 1.0,
       direction = "both",
-      -- voice mode switches are BIG moments. robot should use
-      -- these for dramatic shifts, not constant cycling.
+      -- voice mode switches are BIG moments. very rare.
+      -- blocked entirely when morph is active.
     },
     bm_style = {
       group = "structural",
-      weight = 0.25,
+      weight = 0.1,
       sensitivity = 1.0,
       direction = "both",
+      -- bandmate style changes are disruptive. keep rare.
     },
     bm_phrase = {
       group = "structural",
@@ -202,17 +211,17 @@ return {
     },
     bandmate_on = {
       group = "structural",
-      weight = 0.2,
+      weight = 0.08,
       sensitivity = 1.0,
       direction = "both",
-      -- robot can turn bandmate on/off for texture shifts.
+      -- turning bandmate on/off is very disruptive. almost never.
     },
     morph_on = {
       group = "structural",
-      weight = 0.25,
+      weight = 0.1,
       sensitivity = 1.0,
       direction = "both",
-      -- morph creates rapid texture oscillation. dramatic tool.
+      -- morph is dramatic. toggle sparingly.
     },
     morph_mode_a = {
       group = "structural",
