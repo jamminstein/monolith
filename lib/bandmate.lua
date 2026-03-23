@@ -499,28 +499,45 @@ end
 
 function b.mutate_pattern()
   local p = b.pattern
-  -- pick 1-3 random steps to tweak (not all 16)
-  local num_tweaks = 1 + math.random(2)
+  local int = b.intensity / 10
+
+  -- pick 2-5 random steps to tweak (more at higher intensity)
+  local num_tweaks = 2 + math.random(math.floor(1 + int * 3))
   for _ = 1, num_tweaks do
     local i = math.random(16)
     if p[i] then
-      if math.random() < 0.05 then
-        p[i] = nil -- very rare removal
+      local r = math.random()
+      if r < 0.12 then
+        -- remove note (creates space)
+        p[i] = nil
+      elseif r < 0.3 then
+        -- swap note to different interval
+        p[i].offset = pick_interval(b.style)
+      elseif r < 0.5 then
+        -- velocity shift (larger range)
+        p[i].vel = util.clamp(p[i].vel + (math.random() - 0.5) * 0.25, 0.08, 1.0)
+      elseif r < 0.65 then
+        -- gate length change (makes notes longer or shorter)
+        p[i].gate = util.clamp(p[i].gate + (math.random() - 0.5) * 0.3, 0.05, 0.95)
+      elseif r < 0.75 then
+        -- slide toggle
+        p[i].slide = not p[i].slide
       else
-        -- subtle velocity drift
-        p[i].vel = util.clamp(p[i].vel + (math.random() - 0.5) * 0.08, 0.08, 1.0)
-        -- occasional note swap
-        if math.random() < 0.1 then
-          p[i].offset = pick_interval(b.style)
+        -- shift step position: move this note 1 step earlier or later
+        local new_pos = i + ({-1, 1})[math.random(2)]
+        if new_pos >= 1 and new_pos <= 16 and not p[new_pos] then
+          p[new_pos] = p[i]
+          p[i] = nil
         end
       end
     else
-      -- rare addition
-      if math.random() < 0.15 then
+      -- add note (more likely at higher intensity)
+      if math.random() < 0.2 + int * 0.15 then
         p[i] = {
           offset = pick_interval(b.style),
-          vel = 0.25 + math.random() * 0.35,
-          gate = 0.15 + math.random() * 0.25,
+          vel = 0.2 + math.random() * 0.5,
+          gate = 0.1 + math.random() * 0.35,
+          slide = math.random() < 0.15,
         }
       end
     end
@@ -549,12 +566,31 @@ function b.advance()
   if event then
     -- breathing: skip notes when energy is low
     if b.breathing and b.energy < 1 then
-      -- at energy 0: silence. at 0.5: skip ~50% of notes.
-      -- always keep the 1 (step 1) longer than other notes
       local skip_chance = 1 - b.energy
       if b.step ~= 1 and math.random() < skip_chance then
-        event = nil -- skip this note
+        event = nil
       end
+    end
+    -- LIVE VARIATION: ghost notes appear/disappear randomly each cycle
+    -- keeps the pattern feeling alive, not mechanical
+    if event and b.step ~= 1 then
+      -- low-velocity notes have a chance of being skipped (ghost note flicker)
+      if event.vel < 0.35 and math.random() < 0.3 then
+        event = nil -- ghost note drops out this time
+      end
+      -- occasional random accent on medium notes
+      if event and event.vel > 0.3 and event.vel < 0.7 and math.random() < 0.08 then
+        event = {offset = event.offset, vel = event.vel + 0.2, gate = event.gate, slide = event.slide}
+      end
+    end
+    -- SPONTANEOUS ghost: sometimes add a ghost note where there's none
+    if not event and b.step ~= 1 and math.random() < 0.04 * (b.intensity / 10) then
+      event = {offset = 0, vel = 0.1 + math.random() * 0.15, gate = 0.06 + math.random() * 0.06}
+    end
+  else
+    -- SPONTANEOUS ghost on empty steps
+    if b.step ~= 1 and math.random() < 0.04 * (b.intensity / 10) then
+      event = {offset = 0, vel = 0.1 + math.random() * 0.15, gate = 0.06 + math.random() * 0.06}
     end
   end
   if event then
@@ -713,13 +749,17 @@ function b.advance()
       else
         -- FREEFORM evolution (no form structure)
         if b.bar % b.phrase_len == 0 then
-          if math.random() < 0.15 then
+          if math.random() < 0.25 then
+            -- full regeneration — fresh pattern
             b.generate_pattern()
           else
+            -- heavier mutation at phrase boundaries
+            b.mutate_pattern()
             b.mutate_pattern()
           end
-        elseif b.bar % 4 == 0 then
-          if math.random() < 0.3 then
+        elseif b.bar % 2 == 0 then
+          -- every 2 bars: light mutation (was every 4, too stale)
+          if math.random() < 0.4 then
             b.mutate_pattern()
           end
         end
@@ -745,12 +785,12 @@ function b.start()
       clock.sync(1/4)
       b.swing_count = b.swing_count + 1
       -- swing: delay even steps slightly (does NOT affect sync)
+      -- capped at 40% of a 16th note to never miss the next grid line
       local sw = b.swing
       if sw > 0 and b.swing_count % 2 == 0 then
-        -- swing delay in seconds based on current tempo
-        -- at sw=0.5, delay half a 16th note
-        local beat_dur = clock.get_beat_sec() / 4 -- 16th note duration
-        clock.sleep(beat_dur * sw * 0.5)
+        local sixteenth = clock.get_beat_sec() / 4
+        local delay = math.min(sixteenth * sw * 0.4, sixteenth * 0.4)
+        clock.sleep(delay)
       end
       b.advance()
     end
