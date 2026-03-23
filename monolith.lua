@@ -139,6 +139,7 @@ local SCENES = {
     bm_style = 2, bm_intensity = 5, bm_swing = 0, bm_phrase = 16,
     bandmate_on = 2, doubling = 2, -- oct below
     delay_on = 1, harmonize_on = 1,
+    rev_level = 0.1, rev_size = 0.3, rev_damp = 0.6, -- tight room
     bm_prog_mode = 1, bm_lock = 1,
     bm_form = 2, bm_form_type = 1, -- A-B-A form
     scale_type = 4, -- minor
@@ -151,6 +152,7 @@ local SCENES = {
     bm_style = 1, bm_intensity = 6, bm_swing = 0.35, bm_phrase = 16,
     bandmate_on = 2, doubling = 1,
     delay_on = 1, harmonize_on = 1,
+    rev_level = 0.05, rev_size = 0.2, rev_damp = 0.8, -- dry and tight
     bm_prog_mode = 1, bm_lock = 1,
     bm_form = 2, bm_form_type = 3, -- call-response
     scale_type = 1, -- minor pentatonic
@@ -164,6 +166,7 @@ local SCENES = {
     bandmate_on = 2, doubling = 1,
     delay_on = 2, delay_feedback = 0.35, delay_level = 0.25,
     harmonize_on = 1,
+    rev_level = 0.3, rev_size = 0.6, rev_damp = 0.4, -- spacious club
     bm_prog_mode = 2, bm_prog_type = 2, bm_prog_rate = 8,
     scale_type = 1, bm_lock = 1,
     bm_form = 2, bm_form_type = 5, -- arc form
@@ -177,6 +180,7 @@ local SCENES = {
     bandmate_on = 2, doubling = 1,
     delay_on = 2, delay_feedback = 0.5, delay_level = 0.2,
     harmonize_on = 1,
+    rev_level = 0.2, rev_size = 0.7, rev_damp = 0.3, -- big empty space
     bm_prog_mode = 1, bm_lock = 1,
     bm_form = 2, bm_form_type = 1, -- A-B-A
     scale_type = 1,
@@ -189,6 +193,7 @@ local SCENES = {
     bm_style = 8, bm_intensity = 3, bm_swing = 0, bm_phrase = 16,
     bandmate_on = 2, doubling = 4, -- oct+5th
     delay_on = 1, harmonize_on = 1,
+    rev_level = 0.08, rev_size = 0.4, rev_damp = 0.7, -- tight, heavy room
     bm_prog_mode = 1, bm_lock = 1,
     bm_form = 2, bm_form_type = 2, -- build-drop
     scale_type = 5, -- phrygian
@@ -202,7 +207,8 @@ local SCENES = {
     bandmate_on = 2, doubling = 1,
     delay_on = 2, delay_feedback = 0.5, delay_level = 0.3,
     harmonize_on = 2, harmonize_int = 2,
-    bm_prog_mode = 2, bm_prog_type = 6, bm_prog_rate = 8, -- slow changes
+    rev_level = 0.45, rev_size = 0.85, rev_damp = 0.2, -- massive cathedral
+    bm_prog_mode = 2, bm_prog_type = 6, bm_prog_rate = 8,
     scale_type = 1, bm_lock = 1,
     bm_form = 2, bm_form_type = 4, -- rondo
     stutter_enabled = 1, bass_drop_enabled = 1, time_warp_enabled = 1,
@@ -913,6 +919,7 @@ end
 local function setup_softcut_delay()
   softcut.reset()
   audio.level_eng_cut(1)
+  audio.rev_eng_input(0.15)  -- default reverb send
   audio.level_cut(0) -- start silent, enable when delay is on
   -- voice 1: delay line
   softcut.enable(1, 1)
@@ -1652,6 +1659,26 @@ function init()
 
   -- effects
   params:add_separator("EFFECTS")
+
+  params:add_control("rev_level", "reverb amount",
+    controlspec.new(0, 1, 'lin', 0.01, 0.15))
+  params:set_action("rev_level", function(val)
+    audio.rev_eng_input(val)
+  end)
+
+  params:add_control("rev_size", "reverb size",
+    controlspec.new(0, 1, 'lin', 0.01, 0.5))
+  params:set_action("rev_size", function(val)
+    pcall(function() engine.reverb_size(val) end)
+    -- fallback: norns system reverb
+    audio.rev_monitor_input(val > 0 and 1 or 0)
+  end)
+
+  params:add_control("rev_damp", "reverb damp",
+    controlspec.new(0, 1, 'lin', 0.01, 0.5))
+  params:set_action("rev_damp", function(val)
+    pcall(function() engine.reverb_damp(val) end)
+  end)
 
   params:add_option("delay_on", "tape delay", {"off", "on"}, 1)
   params:set_action("delay_on", function(val)

@@ -278,6 +278,25 @@ return {
       sensitivity = 0.4,
       direction = "both",
     },
+    rev_level = {
+      group = "timbral",
+      weight = 0.4,
+      sensitivity = 0.3,
+      direction = "both",
+      -- reverb adds space. subtle changes for atmosphere.
+    },
+    rev_size = {
+      group = "timbral",
+      weight = 0.25,
+      sensitivity = 0.3,
+      direction = "both",
+    },
+    rev_damp = {
+      group = "timbral",
+      weight = 0.2,
+      sensitivity = 0.25,
+      direction = "both",
+    },
     harmonize_on = {
       group = "structural",
       weight = 0.2,
