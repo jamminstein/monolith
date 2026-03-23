@@ -46,6 +46,33 @@ b.warp_active = false
 b.swing = 0 -- 0=straight, 0.67=triplet
 b.swing_count = 0
 
+-- song form system
+b.form_enabled = false
+b.home_pattern = nil    -- saved "main theme"
+b.form_phase = "home"   -- current phase
+b.form_bar = 0          -- bars in current phase
+b.form_type = 1         -- which form template
+b.form_section = 1      -- current section in the template
+b.FORM_NAMES = {"A-B-A", "build-drop", "call-response", "rondo", "arc", "shuffle"}
+
+-- form templates: each is a sequence of {phase, min_bars, max_bars}
+-- phases: "home"=main theme, "depart"=variation, "grow"=build intensity,
+--         "silence"=drop out, "return"=back to home
+b.FORMS = {
+  -- A-B-A: classic verse/chorus. theme, variation, theme.
+  {{"home",8,16}, {"depart",4,8}, {"home",8,16}, {"depart",4,8}, {"home",8,12}},
+  -- build-drop: steady build to climax then reset.
+  {{"home",8,12}, {"grow",4,8}, {"grow",4,6}, {"silence",1,2}, {"home",8,16}},
+  -- call-response: short exchanges between theme and variations.
+  {{"home",4,6}, {"depart",2,4}, {"home",4,6}, {"depart",2,4}, {"home",4,8}, {"depart",4,6}, {"home",4,8}},
+  -- rondo: A-B-A-C-A-D-A. theme keeps returning between different departures.
+  {{"home",6,10}, {"depart",4,6}, {"home",4,8}, {"grow",4,6}, {"home",4,8}, {"depart",4,6}, {"home",6,10}},
+  -- arc: slow build, peak, slow descent.
+  {{"home",8,12}, {"grow",4,8}, {"grow",4,6}, {"depart",4,8}, {"home",4,6}, {"silence",1,2}, {"home",8,12}},
+  -- shuffle: randomized section lengths, unpredictable but always returns home.
+  {{"home",4,12}, {"depart",2,8}, {"home",4,8}, {"silence",1,2}, {"home",4,12}, {"grow",2,6}, {"home",4,8}},
+}
+
 -- chord progression
 b.progression_mode = false
 b.progression = {0, 5, 7, 0} -- I-IV-V-I in semitones
@@ -601,7 +628,7 @@ function b.advance()
     end
 
     -- pattern evolution (skip if locked)
-    if not b.locked then
+    if not b.locked or b.form_enabled then
       if b.favorites_mode and #b.favorites > 0 then
         -- scroll through saved favorites at phrase boundaries
         if b.bar % b.phrase_len == 0 then
@@ -612,19 +639,79 @@ function b.advance()
           end
           b.pattern = b.deep_copy_pattern(b.favorites[b.favorites_idx])
         end
-      elseif b.bar % b.phrase_len == 0 then
-        -- phrase boundary: moderate change
-        if math.random() < 0.15 then
-          -- rare full regeneration (keeps things fresh over long jams)
-          b.generate_pattern()
-        else
-          -- subtle mutation — pattern stays recognizable
-          b.mutate_pattern()
+
+      elseif b.form_enabled then
+        -- SONG FORM: template-driven structure
+        b.form_bar = b.form_bar + 1
+
+        -- save home pattern if we don't have one yet
+        if not b.home_pattern then
+          b.home_pattern = b.deep_copy_pattern(b.pattern)
         end
-      elseif b.bar % 4 == 0 then
-        -- every 4 bars: very subtle mutation (30% chance)
-        if math.random() < 0.3 then
+
+        -- get current section from template
+        local form = b.FORMS[b.form_type] or b.FORMS[1]
+        local section = form[b.form_section]
+        if not section then
+          -- end of form: loop back, optionally pick new form
+          b.form_section = 1
+          b.form_bar = 0
+          if b.form_type == 6 then -- shuffle: randomize next form
+            b.form_type = math.random(#b.FORMS)
+          end
+          section = form[b.form_section]
+        end
+
+        local phase = section[1]
+        local min_bars = section[2]
+        local max_bars = section[3]
+
+        -- check if it's time to advance to next section
+        if b.form_bar >= min_bars then
+          local advance_chance = (b.form_bar - min_bars) / math.max(1, max_bars - min_bars)
+          if b.form_bar >= max_bars or math.random() < advance_chance * 0.4 then
+            -- advance to next section
+            b.form_section = b.form_section + 1
+            b.form_bar = 0
+            local next_section = form[b.form_section]
+            if next_section then
+              local next_phase = next_section[1]
+              -- apply phase transition
+              if next_phase == "home" or next_phase == "return" then
+                b.pattern = b.deep_copy_pattern(b.home_pattern)
+                b.energy = 1
+              elseif next_phase == "depart" then
+                b.pattern = b.deep_copy_pattern(b.home_pattern)
+                for _ = 1, 3 do b.mutate_pattern() end
+              elseif next_phase == "grow" then
+                b.mutate_pattern()
+              elseif next_phase == "silence" then
+                b.energy = 0.1
+              end
+              b.form_phase = next_phase
+            end
+          end
+        end
+
+        -- within-section behavior
+        if phase == "grow" and b.form_bar % 2 == 0 then
           b.mutate_pattern()
+        elseif phase == "silence" then
+          b.energy = math.max(0.05, b.energy - 0.3)
+        end
+
+      else
+        -- FREEFORM evolution (no form structure)
+        if b.bar % b.phrase_len == 0 then
+          if math.random() < 0.15 then
+            b.generate_pattern()
+          else
+            b.mutate_pattern()
+          end
+        elseif b.bar % 4 == 0 then
+          if math.random() < 0.3 then
+            b.mutate_pattern()
+          end
         end
       end
     end
@@ -636,7 +723,11 @@ function b.start()
   b.playing = true
   b.step = 0
   b.bar = 0
+  b.form_bar = 0
+  b.form_section = 1
+  b.form_phase = "home"
   b.generate_pattern()
+  b.home_pattern = b.deep_copy_pattern(b.pattern)
   b.swing_count = 0
   b.clock_id = clock.run(function()
     while b.playing do

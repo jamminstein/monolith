@@ -140,6 +140,7 @@ local SCENES = {
     bandmate_on = 2, doubling = 2, -- oct below
     delay_on = 1, harmonize_on = 1,
     bm_prog_mode = 1, bm_lock = 1,
+    bm_form = 2, bm_form_type = 1, -- A-B-A form
     scale_type = 4, -- minor
     stutter_enabled = 1, bass_drop_enabled = 1, time_warp_enabled = 1,
     morph_on = 1, arp_enabled = 1,
@@ -151,6 +152,7 @@ local SCENES = {
     bandmate_on = 2, doubling = 1,
     delay_on = 1, harmonize_on = 1,
     bm_prog_mode = 1, bm_lock = 1,
+    bm_form = 2, bm_form_type = 3, -- call-response
     scale_type = 1, -- minor pentatonic
     stutter_enabled = 1, bass_drop_enabled = 1, time_warp_enabled = 1,
     morph_on = 1, arp_enabled = 1,
@@ -162,8 +164,9 @@ local SCENES = {
     bandmate_on = 2, doubling = 1,
     delay_on = 2, delay_feedback = 0.35, delay_level = 0.25,
     harmonize_on = 1,
-    bm_prog_mode = 2, bm_prog_type = 2, bm_prog_rate = 8, -- I-V-vi-IV, slow changes
+    bm_prog_mode = 2, bm_prog_type = 2, bm_prog_rate = 8,
     scale_type = 1, bm_lock = 1,
+    bm_form = 2, bm_form_type = 5, -- arc form
     stutter_enabled = 1, bass_drop_enabled = 1, time_warp_enabled = 1,
     morph_on = 1, arp_enabled = 1,
   },
@@ -175,6 +178,7 @@ local SCENES = {
     delay_on = 2, delay_feedback = 0.5, delay_level = 0.2,
     harmonize_on = 1,
     bm_prog_mode = 1, bm_lock = 1,
+    bm_form = 2, bm_form_type = 1, -- A-B-A
     scale_type = 1,
     stutter_enabled = 1, bass_drop_enabled = 1, time_warp_enabled = 1,
     morph_on = 1, arp_enabled = 1,
@@ -186,6 +190,7 @@ local SCENES = {
     bandmate_on = 2, doubling = 4, -- oct+5th
     delay_on = 1, harmonize_on = 1,
     bm_prog_mode = 1, bm_lock = 1,
+    bm_form = 2, bm_form_type = 2, -- build-drop
     scale_type = 5, -- phrygian
     stutter_enabled = 1, bass_drop_enabled = 1, time_warp_enabled = 1,
     morph_on = 1, arp_enabled = 1,
@@ -199,6 +204,7 @@ local SCENES = {
     harmonize_on = 2, harmonize_int = 2,
     bm_prog_mode = 2, bm_prog_type = 6, bm_prog_rate = 8, -- slow changes
     scale_type = 1, bm_lock = 1,
+    bm_form = 2, bm_form_type = 4, -- rondo
     stutter_enabled = 1, bass_drop_enabled = 1, time_warp_enabled = 1,
     morph_on = 1, arp_enabled = 1,
   },
@@ -1547,6 +1553,24 @@ function init()
     bandmate.save_pattern(slot, data_dir)
     table.insert(bandmate.favorites, bandmate.deep_copy_pattern(bandmate.pattern))
     print("monolith: saved pattern to slot " .. slot)
+  end)
+
+  params:add_option("bm_form", "song form", {"off", "on"}, 1)
+  params:set_action("bm_form", function(val)
+    bandmate.form_enabled = val == 2
+    if val == 2 then
+      bandmate.home_pattern = bandmate.deep_copy_pattern(bandmate.pattern)
+      bandmate.form_section = 1
+      bandmate.form_bar = 0
+      bandmate.form_phase = "home"
+    end
+  end)
+
+  params:add_option("bm_form_type", "form type", bandmate.FORM_NAMES, 1)
+  params:set_action("bm_form_type", function(val)
+    bandmate.form_type = val
+    bandmate.form_section = 1
+    bandmate.form_bar = 0
   end)
 
   params:add_control("bm_swing", "swing",
