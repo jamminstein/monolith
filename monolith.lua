@@ -128,6 +128,79 @@ local PROG_PRESETS = {
 local PROG_NAMES = {}
 for _, p in ipairs(PROG_PRESETS) do table.insert(PROG_NAMES, p.name) end
 
+-- scenes: full instrument presets that configure everything at once
+local SCENE_NAMES = {"(none)", "HIT", "SYNCOP", "CLUB", "MINIMAL", "HEAVY", "WEIRD"}
+local SCENES = {
+  -- 1: (none) = do nothing
+  nil,
+  -- 2: HIT — iconic crowd-moving bass lines. simple, heavy, evolving.
+  {
+    voice_mode = 1, macro = 0.35, destroy = 0,
+    bm_style = 2, bm_intensity = 6, bm_swing = 0, bm_phrase = 8,
+    bandmate_on = 2, doubling = 2, -- oct below
+    delay_on = 1, harmonize_on = 1,
+    bm_prog_mode = 1, -- off, stay on root
+    scale_type = 4, -- minor
+  },
+  -- 3: SYNCOP — ultra locked groove for drummers. tight, funky, ghost notes.
+  {
+    voice_mode = 2, macro = 0.4, destroy = 0,
+    bm_style = 1, bm_intensity = 8, bm_swing = 0.4, bm_phrase = 4,
+    bandmate_on = 2, doubling = 1, -- off
+    delay_on = 1, harmonize_on = 1,
+    bm_prog_mode = 1,
+    scale_type = 1, -- minor pentatonic
+  },
+  -- 4: CLUB — dance, sweet, sexy. bouncy with delay and progression.
+  {
+    voice_mode = 10, macro = 0.5, destroy = 0,
+    bm_style = 7, bm_intensity = 5, bm_swing = 0.2, bm_phrase = 4,
+    bandmate_on = 2, doubling = 1,
+    delay_on = 2, delay_feedback = 0.4, delay_level = 0.3,
+    harmonize_on = 1,
+    bm_prog_mode = 2, bm_prog_type = 2, bm_prog_rate = 4, -- I-V-vi-IV
+    scale_type = 1,
+  },
+  -- 5: MINIMAL — stripped, hypnotic, minimal techno. sparse, locked, repetitive.
+  {
+    voice_mode = 3, macro = 0.3, destroy = 0,
+    bm_style = 4, bm_intensity = 3, bm_swing = 0, bm_phrase = 8,
+    bandmate_on = 2, doubling = 1,
+    delay_on = 2, delay_feedback = 0.6, delay_level = 0.25,
+    harmonize_on = 1,
+    bm_prog_mode = 1,
+    scale_type = 3, -- chromatic
+  },
+  -- 6: HEAVY — maximum weight, doom, stoner. slow, crushing, thick.
+  {
+    voice_mode = 8, macro = 0.5, destroy = 0.15,
+    bm_style = 8, bm_intensity = 4, bm_swing = 0, bm_phrase = 8,
+    bandmate_on = 2, doubling = 4, -- oct+5th
+    delay_on = 1, harmonize_on = 1,
+    bm_prog_mode = 1,
+    scale_type = 5, -- phrygian
+  },
+  -- 7: WEIRD — experimental, unpredictable, vocoder+rubber.
+  {
+    voice_mode = 9, macro = 0.6, destroy = 0.2,
+    bm_style = 5, bm_intensity = 7, bm_swing = 0.3, bm_phrase = 3,
+    bandmate_on = 2, doubling = 1,
+    delay_on = 2, delay_feedback = 0.7, delay_level = 0.4,
+    harmonize_on = 2, harmonize_int = 2, -- 5th below
+    bm_prog_mode = 2, bm_prog_type = 6, bm_prog_rate = 3, -- i-VII-VI-v
+    scale_type = 3, -- chromatic
+  },
+}
+
+local function apply_scene(idx)
+  if idx <= 1 or not SCENES[idx] then return end
+  local s = SCENES[idx]
+  for k, v in pairs(s) do
+    -- try to set as param (silently skip if not found)
+    pcall(function() params:set(k, v) end)
+  end
+end
+
 -- robot
 local robot_personality = 1
 local PERSONALITY_NAMES = {"chill", "aggressive", "chaotic"}
@@ -1364,6 +1437,11 @@ function init()
 
   -- monolith params
   params:add_separator("MONOLITH")
+
+  params:add_option("scene", ">> SCENE", SCENE_NAMES, 1)
+  params:set_action("scene", function(val)
+    apply_scene(val)
+  end)
 
   params:add_option("voice_mode", "voice mode", MODE_NAMES, 1)
   params:set_action("voice_mode", function(val)
