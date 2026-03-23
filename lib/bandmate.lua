@@ -769,7 +769,11 @@ end
 
 function b.set_scale(root, scale_name)
   b.root = root
-  b.scale_notes = musicutil.generate_scale(root - 12, scale_name, 3)
+  -- generate scale (may fail for microtonal names, that's ok —
+  -- bandmate uses interval offsets, not scale_notes)
+  pcall(function()
+    b.scale_notes = musicutil.generate_scale(root - 12, scale_name, 3)
+  end)
 end
 
 function b.init(note_on_fn, note_off_fn, root, scale_name)

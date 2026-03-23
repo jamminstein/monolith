@@ -39,7 +39,84 @@ local NUM_MODES = 11
 local SCALE_NAMES = {
   "Minor Pentatonic", "Dorian", "Chromatic",
   "Minor", "Phrygian", "Mixolydian",
+  "Just Minor", "Arabic", "Slendro", "Hirajoshi",
 }
+
+---------- MICROTONAL ----------
+-- scales defined in cents from root. standard 12-TET = nil (use musicutil)
+-- microtonal scales bypass musicutil entirely
+local MICRO_SCALES = {
+  nil, nil, nil, nil, nil, nil, -- 1-6: standard scales, handled by musicutil
+
+  -- 7: Just Intonation Minor (pure ratios, warmer than equal temperament)
+  -- 1/1, 9/8, 6/5, 4/3, 3/2, 8/5, 9/5
+  {0, 204, 316, 498, 702, 814, 1018},
+
+  -- 8: Arabic Maqam Bayati (quarter-tone scale, haunting and exotic)
+  -- root, 3/4tone, minor3, 4th, 5th, minor6, minor7
+  {0, 150, 300, 500, 700, 800, 1000},
+
+  -- 9: Gamelan Slendro (5-note, roughly equal ~240 cent spacing, meditative)
+  {0, 240, 480, 720, 960},
+
+  -- 10: Hirajoshi (Japanese, dark and beautiful)
+  -- uses quarter-tone inflections on the 2nd and 5th
+  {0, 200, 300, 700, 800},
+}
+
+-- convert a "virtual MIDI note" to frequency using microtonal scale
+-- note_num is treated as: root + scale_degree (wrapping across octaves)
+local function micro_to_freq(note_num, root, scale_cents)
+  local degree = note_num - root
+  local num_degrees = #scale_cents
+  -- how many octaves up/down from root
+  local octave = math.floor(degree / num_degrees)
+  local idx = degree % num_degrees
+  if idx < 0 then
+    idx = idx + num_degrees
+    octave = octave - 1
+  end
+  local root_freq = musicutil.note_num_to_freq(root)
+  local cents = scale_cents[idx + 1] + (octave * 1200)
+  return root_freq * (2 ^ (cents / 1200))
+end
+
+-- master freq function: handles both standard and microtonal
+local function note_to_freq(note_num)
+  local micro = MICRO_SCALES[scale_type]
+  if micro then
+    return micro_to_freq(note_num, root_note, micro)
+  else
+    return musicutil.note_num_to_freq(note_num)
+  end
+end
+
+-- generate a scale as note numbers (works for both standard and microtonal)
+-- for microtonal: returns sequential integers starting from root (each = one scale degree)
+-- for standard: uses musicutil.generate_scale
+local function gen_scale(root, octaves)
+  local micro = MICRO_SCALES[scale_type]
+  if micro then
+    local notes = {}
+    local degrees = #micro
+    for oct = -1, octaves do
+      for deg = 0, degrees - 1 do
+        table.insert(notes, root + oct * degrees + deg)
+      end
+    end
+    return notes
+  else
+    return musicutil.generate_scale(root, SCALE_NAMES[scale_type], octaves)
+  end
+end
+
+-- how many notes per octave in current scale
+local function notes_per_octave()
+  local micro = MICRO_SCALES[scale_type]
+  if micro then return #micro end
+  local s = musicutil.generate_scale(0, SCALE_NAMES[scale_type], 1)
+  return #s - 1 -- generate_scale includes the octave note
+end
 local ACT_LEN = 128
 
 ---------- STATE ----------
@@ -142,8 +219,8 @@ local SCALE_PALETTES = {
   {home = 1, depart = 2, grow = 4, silence = 1},
   -- HEAVY: phrygian home (dark), minor departure, chromatic grow (dissonant build)
   {home = 5, depart = 4, grow = 3, silence = 5},
-  -- WEIRD: min pent home, chromatic departure, phrygian grow, mixolydian silence
-  {home = 1, depart = 3, grow = 5, silence = 6},
+  -- WEIRD: min pent home, arabic departure (exotic), just minor grow (warm), slendro silence (alien)
+  {home = 1, depart = 8, grow = 7, silence = 9},
 }
 local active_palette = nil  -- set when a scene is applied
 local last_form_phase = nil -- track phase changes for scale shifts
@@ -1148,11 +1225,12 @@ local grid_note_map = {} -- [row][col] = midi note
 
 local function build_grid_note_map()
   grid_note_map = {}
-  local scale = musicutil.generate_scale(root_note - 24, SCALE_NAMES[scale_type], 7)
+  local scale = gen_scale(root_note - 24, 7)
+  local npo = notes_per_octave()
   -- rows 4-8: 5 playable rows, row 8=lowest, row 4=highest
   for row = 4, 8 do
     grid_note_map[row] = {}
-    local oct_offset = (8 - row) * #musicutil.generate_scale(0, SCALE_NAMES[scale_type], 1)
+    local oct_offset = (8 - row) * npo
     for col = 1, 16 do
       local idx = oct_offset + col
       if idx >= 1 and idx <= #scale then
@@ -1375,7 +1453,7 @@ end
 
 local function note_on(note, vel)
   vel = apply_vel_curve(vel)
-  local freq = musicutil.note_num_to_freq(note)
+  local freq = note_to_freq(note)
   engine.noteOn(note, freq, vel)
   current_notes[note] = vel
   last_note = note
@@ -1384,7 +1462,7 @@ local function note_on(note, vel)
   if harmonize_on then
     local h_note = note - harmonize_interval
     if h_note >= 20 and h_note <= 108 then
-      local h_freq = musicutil.note_num_to_freq(h_note)
+      local h_freq = note_to_freq(h_note)
       engine.noteOn(h_note + 1000, h_freq, vel * 0.6)
       harmony_notes[note] = h_note
     end
@@ -1395,14 +1473,14 @@ local function note_on(note, vel)
     if doubling_mode == 2 or doubling_mode == 4 then
       local dn = note - 12
       if dn >= 20 then
-        engine.noteOn(note + 2000, musicutil.note_num_to_freq(dn), vel * 0.5)
+        engine.noteOn(note + 2000, note_to_freq(dn), vel * 0.5)
         table.insert(extras, note + 2000)
       end
     end
     if doubling_mode == 3 or doubling_mode == 4 then
       local fn = note - 7
       if fn >= 20 then
-        engine.noteOn(note + 3000, musicutil.note_num_to_freq(fn), vel * 0.45)
+        engine.noteOn(note + 3000, note_to_freq(fn), vel * 0.45)
         table.insert(extras, note + 3000)
       end
     end
@@ -1443,7 +1521,7 @@ local function build_arp_pattern()
   -- build scale run from held notes
   if #arp_held_notes == 0 then return {} end
   local base = arp_held_notes[1]
-  local scale = musicutil.generate_scale(base, SCALE_NAMES[scale_type], arp_range)
+  local scale = gen_scale(base, arp_range)
   if arp_style == 2 then
     -- reverse for down
     local rev = {}
