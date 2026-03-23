@@ -39,7 +39,7 @@ b.breath_phase = "play" -- "play", "fade", "silence", "build"
 b.mode_glide = 0
 
 -- time warp (set by host)
-b.warp_rate = 1.0
+b.warp_skip = 1    -- 1=normal, 2=every other step, 4=every 4th
 b.warp_active = false
 
 -- swing
@@ -531,6 +531,11 @@ function b.advance()
 
   b.step = b.step % 16 + 1
 
+  -- time warp: skip steps to simulate slowdown (stays on grid)
+  if b.warp_skip > 1 and b.step % b.warp_skip ~= 1 then
+    return -- skip this step, clock stays locked
+  end
+
   -- release previous note
   if b.current_note and b.note_off_fn then
     b.note_off_fn(b.current_note)
@@ -569,10 +574,11 @@ function b.advance()
       b.current_note = note
     end
 
-    -- schedule note off based on gate
+    -- schedule note off based on gate (use sleep for precision, not sync)
     if event.gate < 0.9 then
       clock.run(function()
-        clock.sync(event.gate * (1/4))
+        local gate_dur = clock.get_beat_sec() / 4 * event.gate
+        clock.sleep(gate_dur)
         if b.current_note == note and b.note_off_fn then
           b.note_off_fn(note)
           if b.current_note == note then b.current_note = nil end
@@ -732,16 +738,16 @@ function b.start()
   b.swing_count = 0
   b.clock_id = clock.run(function()
     while b.playing do
+      -- ALWAYS sync to exact 16th note grid — never drift
+      clock.sync(1/4)
       b.swing_count = b.swing_count + 1
+      -- swing: delay even steps slightly (does NOT affect sync)
       local sw = b.swing
-      local base = (1/4) * b.warp_rate
-      -- swing: odd steps shorter, even steps longer
       if sw > 0 and b.swing_count % 2 == 0 then
-        clock.sync(base * (1 + sw))
-      elseif sw > 0 then
-        clock.sync(base * (1 - sw))
-      else
-        clock.sync(base)
+        -- swing delay in seconds based on current tempo
+        -- at sw=0.5, delay half a 16th note
+        local beat_dur = clock.get_beat_sec() / 4 -- 16th note duration
+        clock.sleep(beat_dur * sw * 0.5)
       end
       b.advance()
     end

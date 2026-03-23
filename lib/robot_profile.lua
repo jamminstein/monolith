@@ -327,12 +327,12 @@ return {
     },
     bm_swing = {
       group = "rhythmic",
-      weight = 0.65,
-      sensitivity = 0.5,
+      weight = 0.3,
+      sensitivity = 0.3,
       direction = "both",
       range_lo = 0,
-      range_hi = 0.6,
-      -- swing is the groove knob. robot should ride it.
+      range_hi = 0.25,
+      -- subtle swing only. bass needs precision.
     },
     bm_prog_mode = {
       group = "structural",

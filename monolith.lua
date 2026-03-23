@@ -246,7 +246,7 @@ local SCENES = {
   -- 3: SYNCOP — ultra locked groove for drummers. tight, funky, controlled.
   {
     voice_mode = 2, macro = 0.35, destroy = 0,
-    bm_style = 1, bm_intensity = 6, bm_swing = 0.35, bm_phrase = 16,
+    bm_style = 1, bm_intensity = 6, bm_swing = 0.15, bm_phrase = 16,
     bandmate_on = 2, doubling = 1,
     delay_on = 1, harmonize_on = 1,
     rev_level = 0.05, rev_size = 0.8, rev_damp = 3000, -- dry and tight
@@ -1201,15 +1201,19 @@ end
 local function trigger_time_warp()
   if params:get("time_warp_enabled") == 1 then return end
   -- the slow-down / catch-up effect
-  -- smoothly changes bandmate step rate: normal -> slow -> slower -> catches back up
+  -- mutes steps to simulate slowdown, then plays all to catch up
+  -- stays perfectly locked to the grid — never changes sync rate
   bandmate.warp_active = true
   clock.run(function()
-    local curve = {1.0, 1.5, 2.5, 4.0, 4.0, 3.0, 2.0, 1.5, 1.0}
-    for _, rate in ipairs(curve) do
-      bandmate.warp_rate = rate
-      clock.sync(0.5) -- each stage lasts half a beat
-    end
-    bandmate.warp_rate = 1.0
+    -- slow phase: skip more and more steps (4 beats = 16 steps)
+    bandmate.warp_skip = 2  -- play every 2nd step
+    clock.sync(1)
+    bandmate.warp_skip = 4  -- play every 4th step (slowest)
+    clock.sync(1)
+    -- catch-up phase: back to normal
+    bandmate.warp_skip = 2
+    clock.sync(0.5)
+    bandmate.warp_skip = 1  -- normal
     bandmate.warp_active = false
   end)
 end
@@ -1782,7 +1786,7 @@ function init()
   end)
 
   params:add_control("bm_swing", "swing",
-    controlspec.new(0, 0.7, 'lin', 0.01, 0))
+    controlspec.new(0, 0.4, 'lin', 0.01, 0))
   params:set_action("bm_swing", function(val) bandmate.swing = val end)
 
   params:add_option("bm_prog_mode", "chord progression", {"off", "on"}, 1)
