@@ -342,27 +342,27 @@ local SCENES = {
     stutter_enabled = 1, bass_drop_enabled = 1, time_warp_enabled = 1,
     morph_on = 1, arp_enabled = 1,
   },
-  -- 8: FERAL — lightning bolt meets squarepusher. no guardrails.
+  -- 8: FERAL — lightning bolt meets squarepusher. heavy but wild.
   {
-    voice_mode = 5, macro = 0.7, destroy = 0.4,
-    bm_style = 5, bm_intensity = 9, bm_swing = 0.25, bm_phrase = 4,
-    bandmate_on = 2, doubling = 4, -- oct+5th for maximum weight
-    delay_on = 2, delay_feedback = 0.7, delay_level = 0.4,
-    harmonize_on = 2, harmonize_int = 3, -- 5th above
-    rev_level = 0.35, rev_size = 3, rev_damp = 10000,
-    stereo_width = 4, chord_mode = 2, chord_chance = 35,
-    bm_prog_mode = 2, bm_prog_type = 4, bm_prog_rate = 2, -- 12 bar blues, fast changes
-    scale_type = 3, bm_lock = 1, -- chromatic (no wrong notes when everything is wrong)
+    voice_mode = 1, macro = 0.55, destroy = 0.2,
+    bm_style = 5, bm_intensity = 8, bm_swing = 0.15, bm_phrase = 4,
+    bandmate_on = 2, doubling = 2, -- oct below for deep sub weight
+    delay_on = 2, delay_feedback = 0.5, delay_level = 0.3,
+    harmonize_on = 2, harmonize_int = 1, -- octave below (more bass, not highs)
+    rev_level = 0.2, rev_size = 3, rev_damp = 3000, -- dark reverb
+    stereo_width = 3, chord_mode = 2, chord_chance = 25,
+    bm_prog_mode = 2, bm_prog_type = 4, bm_prog_rate = 4, -- 12 bar blues, 4 bar changes
+    scale_type = 1, bm_lock = 1, -- minor pentatonic (heavy but musical)
     bm_form = 2, bm_form_type = 6, -- shuffle form (unpredictable)
     robot_personality = 3, -- chaotic: conductor steps aside
     stutter_enabled = 2, bass_drop_enabled = 2, time_warp_enabled = 2,
-    morph_on = 2, morph_style = 3, morph_rate = 2, -- random morph, fast
+    morph_on = 2, morph_style = 3, morph_rate = 3, -- random morph, medium rate
     arp_enabled = 1,
   },
 }
 
 -- add FERAL to scale palettes
-SCALE_PALETTES[8] = {home = 3, depart = 5, grow = 8, silence = 9}
+SCALE_PALETTES[8] = {home = 1, depart = 5, grow = 4, silence = 9}
 
 local function apply_scene(idx)
   if idx <= 1 or not SCENES[idx] then return end
