@@ -469,26 +469,24 @@ end
 
 function b.mutate_pattern()
   local p = b.pattern
-  for i = 1, 16 do
+  -- pick 1-3 random steps to tweak (not all 16)
+  local num_tweaks = 1 + math.random(2)
+  for _ = 1, num_tweaks do
+    local i = math.random(16)
     if p[i] then
-      -- small chance to remove
-      if math.random() < 0.08 then
-        p[i] = nil
+      if math.random() < 0.05 then
+        p[i] = nil -- very rare removal
       else
-        -- velocity drift
-        p[i].vel = util.clamp(p[i].vel + (math.random() - 0.5) * 0.12, 0.08, 1.0)
+        -- subtle velocity drift
+        p[i].vel = util.clamp(p[i].vel + (math.random() - 0.5) * 0.08, 0.08, 1.0)
         -- occasional note swap
-        if math.random() < 0.15 then
-          p[i].offset = pick_interval(b.style)
-        end
-        -- gate variation
         if math.random() < 0.1 then
-          p[i].gate = util.clamp(p[i].gate + (math.random() - 0.5) * 0.15, 0.04, 0.95)
+          p[i].offset = pick_interval(b.style)
         end
       end
     else
-      -- small chance to add a note
-      if math.random() < 0.06 then
+      -- rare addition
+      if math.random() < 0.15 then
         p[i] = {
           offset = pick_interval(b.style),
           vel = 0.25 + math.random() * 0.35,
@@ -571,29 +569,29 @@ function b.advance()
     -- breathing: creates silent/low moments in the song
     if b.breathing then
       if b.breath_phase == "play" then
-        -- playing normally. after 4-12 bars, maybe start fading
-        if b.breath_bar > 4 and math.random() < 0.15 then
+        -- playing normally. after 12-24 bars, maybe start fading
+        if b.breath_bar > 12 and math.random() < 0.08 then
           b.breath_phase = "fade"
           b.breath_bar = 0
         end
       elseif b.breath_phase == "fade" then
-        -- fading out over 2-4 bars
-        b.energy = math.max(0, b.energy - (0.25 + math.random() * 0.2))
+        -- fading out over 3-5 bars (gentle)
+        b.energy = math.max(0, b.energy - (0.15 + math.random() * 0.15))
         if b.energy <= 0.05 then
           b.breath_phase = "silence"
           b.energy = 0
           b.breath_bar = 0
         end
       elseif b.breath_phase == "silence" then
-        -- total silence for 1-4 bars
+        -- brief silence: 1-2 bars max
         b.energy = 0
-        if b.breath_bar > 1 and math.random() < 0.4 then
+        if b.breath_bar >= 1 and math.random() < 0.6 then
           b.breath_phase = "build"
           b.breath_bar = 0
         end
       elseif b.breath_phase == "build" then
-        -- building back up over 2-4 bars
-        b.energy = math.min(1, b.energy + (0.2 + math.random() * 0.25))
+        -- building back up over 2-3 bars
+        b.energy = math.min(1, b.energy + (0.25 + math.random() * 0.25))
         if b.energy >= 0.95 then
           b.breath_phase = "play"
           b.energy = 1
@@ -615,16 +613,19 @@ function b.advance()
           b.pattern = b.deep_copy_pattern(b.favorites[b.favorites_idx])
         end
       elseif b.bar % b.phrase_len == 0 then
-        -- phrase boundary: bigger change
-        if math.random() < 0.35 then
+        -- phrase boundary: moderate change
+        if math.random() < 0.15 then
+          -- rare full regeneration (keeps things fresh over long jams)
           b.generate_pattern()
         else
-          b.mutate_pattern()
+          -- subtle mutation — pattern stays recognizable
           b.mutate_pattern()
         end
-      elseif b.bar % 2 == 0 then
-        -- every 2 bars: subtle mutation
-        b.mutate_pattern()
+      elseif b.bar % 4 == 0 then
+        -- every 4 bars: very subtle mutation (30% chance)
+        if math.random() < 0.3 then
+          b.mutate_pattern()
+        end
       end
     end
   end

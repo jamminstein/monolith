@@ -133,62 +133,74 @@ local SCENE_NAMES = {"(none)", "HIT", "SYNCOP", "CLUB", "MINIMAL", "HEAVY", "WEI
 local SCENES = {
   -- 1: (none) = do nothing
   nil,
-  -- 2: HIT — iconic crowd-moving bass lines. simple, heavy, evolving.
+  -- 2: HIT — iconic crowd-moving lines. steady, simple, powerful.
   {
-    voice_mode = 1, macro = 0.35, destroy = 0,
-    bm_style = 2, bm_intensity = 6, bm_swing = 0, bm_phrase = 8,
+    voice_mode = 1, macro = 0.3, destroy = 0,
+    bm_style = 2, bm_intensity = 5, bm_swing = 0, bm_phrase = 16,
     bandmate_on = 2, doubling = 2, -- oct below
     delay_on = 1, harmonize_on = 1,
-    bm_prog_mode = 1, -- off, stay on root
+    bm_prog_mode = 1, bm_lock = 1,
     scale_type = 4, -- minor
+    stutter_enabled = 1, bass_drop_enabled = 1, time_warp_enabled = 1,
+    morph_on = 1, arp_enabled = 1,
   },
-  -- 3: SYNCOP — ultra locked groove for drummers. tight, funky, ghost notes.
+  -- 3: SYNCOP — ultra locked groove for drummers. tight, funky, controlled.
   {
-    voice_mode = 2, macro = 0.4, destroy = 0,
-    bm_style = 1, bm_intensity = 8, bm_swing = 0.4, bm_phrase = 4,
-    bandmate_on = 2, doubling = 1, -- off
+    voice_mode = 2, macro = 0.35, destroy = 0,
+    bm_style = 1, bm_intensity = 6, bm_swing = 0.35, bm_phrase = 16,
+    bandmate_on = 2, doubling = 1,
     delay_on = 1, harmonize_on = 1,
-    bm_prog_mode = 1,
+    bm_prog_mode = 1, bm_lock = 1,
     scale_type = 1, -- minor pentatonic
+    stutter_enabled = 1, bass_drop_enabled = 1, time_warp_enabled = 1,
+    morph_on = 1, arp_enabled = 1,
   },
-  -- 4: CLUB — dance, sweet, sexy. bouncy with delay and progression.
+  -- 4: CLUB — dance, sweet, structured. predictable changes, steady groove.
   {
-    voice_mode = 10, macro = 0.5, destroy = 0,
-    bm_style = 7, bm_intensity = 5, bm_swing = 0.2, bm_phrase = 4,
+    voice_mode = 10, macro = 0.4, destroy = 0,
+    bm_style = 7, bm_intensity = 4, bm_swing = 0.15, bm_phrase = 16,
     bandmate_on = 2, doubling = 1,
-    delay_on = 2, delay_feedback = 0.4, delay_level = 0.3,
+    delay_on = 2, delay_feedback = 0.35, delay_level = 0.25,
     harmonize_on = 1,
-    bm_prog_mode = 2, bm_prog_type = 2, bm_prog_rate = 4, -- I-V-vi-IV
+    bm_prog_mode = 2, bm_prog_type = 2, bm_prog_rate = 8, -- I-V-vi-IV, slow changes
+    scale_type = 1, bm_lock = 1,
+    stutter_enabled = 1, bass_drop_enabled = 1, time_warp_enabled = 1,
+    morph_on = 1, arp_enabled = 1,
+  },
+  -- 5: MINIMAL — stripped, hypnotic. locked pattern, very slow evolution.
+  {
+    voice_mode = 3, macro = 0.25, destroy = 0,
+    bm_style = 4, bm_intensity = 3, bm_swing = 0, bm_phrase = 16,
+    bandmate_on = 2, doubling = 1,
+    delay_on = 2, delay_feedback = 0.5, delay_level = 0.2,
+    harmonize_on = 1,
+    bm_prog_mode = 1, bm_lock = 1,
     scale_type = 1,
+    stutter_enabled = 1, bass_drop_enabled = 1, time_warp_enabled = 1,
+    morph_on = 1, arp_enabled = 1,
   },
-  -- 5: MINIMAL — stripped, hypnotic, minimal techno. sparse, locked, repetitive.
+  -- 6: HEAVY — maximum weight. steady crushing groove.
   {
-    voice_mode = 3, macro = 0.3, destroy = 0,
-    bm_style = 4, bm_intensity = 3, bm_swing = 0, bm_phrase = 8,
-    bandmate_on = 2, doubling = 1,
-    delay_on = 2, delay_feedback = 0.6, delay_level = 0.25,
-    harmonize_on = 1,
-    bm_prog_mode = 1,
-    scale_type = 3, -- chromatic
-  },
-  -- 6: HEAVY — maximum weight, doom, stoner. slow, crushing, thick.
-  {
-    voice_mode = 8, macro = 0.5, destroy = 0.15,
-    bm_style = 8, bm_intensity = 4, bm_swing = 0, bm_phrase = 8,
+    voice_mode = 8, macro = 0.4, destroy = 0.1,
+    bm_style = 8, bm_intensity = 3, bm_swing = 0, bm_phrase = 16,
     bandmate_on = 2, doubling = 4, -- oct+5th
     delay_on = 1, harmonize_on = 1,
-    bm_prog_mode = 1,
+    bm_prog_mode = 1, bm_lock = 1,
     scale_type = 5, -- phrygian
+    stutter_enabled = 1, bass_drop_enabled = 1, time_warp_enabled = 1,
+    morph_on = 1, arp_enabled = 1,
   },
-  -- 7: WEIRD — experimental, unpredictable, vocoder+rubber.
+  -- 7: WEIRD — experimental but still musical. controlled chaos.
   {
-    voice_mode = 9, macro = 0.6, destroy = 0.2,
-    bm_style = 5, bm_intensity = 7, bm_swing = 0.3, bm_phrase = 3,
+    voice_mode = 9, macro = 0.5, destroy = 0.15,
+    bm_style = 5, bm_intensity = 5, bm_swing = 0.2, bm_phrase = 8,
     bandmate_on = 2, doubling = 1,
-    delay_on = 2, delay_feedback = 0.7, delay_level = 0.4,
-    harmonize_on = 2, harmonize_int = 2, -- 5th below
-    bm_prog_mode = 2, bm_prog_type = 6, bm_prog_rate = 3, -- i-VII-VI-v
-    scale_type = 3, -- chromatic
+    delay_on = 2, delay_feedback = 0.5, delay_level = 0.3,
+    harmonize_on = 2, harmonize_int = 2,
+    bm_prog_mode = 2, bm_prog_type = 6, bm_prog_rate = 8, -- slow changes
+    scale_type = 1, bm_lock = 1,
+    stutter_enabled = 1, bass_drop_enabled = 1, time_warp_enabled = 1,
+    morph_on = 1, arp_enabled = 1,
   },
 }
 
