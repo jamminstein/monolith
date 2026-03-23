@@ -2383,33 +2383,36 @@ end
 function key(n, z)
   if n == 2 then
     k2_held = z == 1
-    if z == 1 and not k3_held then
-      -- K2 tap: cycle voice mode (only if not doing combo)
-    elseif z == 0 and filter_sweep_active then
+    if z == 0 and filter_sweep_active then
       -- K2 release: snap filter back
       filter_sweep_active = false
       if filter_sweep_base then
         params:set("filter_cutoff", filter_sweep_base)
         filter_sweep_base = nil
       end
-    elseif z == 1 and not filter_sweep_active then
-      params:set("voice_mode", voice_mode % NUM_MODES + 1)
+    elseif z == 1 then
+      if k3_held then
+        -- K2+K3 combo: tape stop
+        trigger_tape_stop()
+      else
+        -- K2 tap: cycle voice mode
+        params:set("voice_mode", voice_mode % NUM_MODES + 1)
+      end
     end
   elseif n == 3 then
     k3_held = z == 1
     if z == 1 then
       if k2_held then
-        -- K2+K3 combo: tape stop
-        trigger_tape_stop()
-      else
-        -- K3 hold: kill switch (mute while held)
+        -- K2+K3 combo: kill switch (hold both to mute)
         kill_active = true
         engine.noteOffAll()
         audio.level_eng(0)
+      else
+        -- K3 tap: toggle bandmate
+        params:set("bandmate_on", bandmate_active and 1 or 2)
       end
     elseif z == 0 then
       if kill_active then
-        -- K3 release: dramatic re-entry
         kill_active = false
         audio.level_eng(1)
       end
