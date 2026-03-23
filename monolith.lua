@@ -188,6 +188,39 @@ local CHORD_INTERVALS = {
 local chord_notes = {}  -- track active chord notes for note_off
 local chord_chance = 0  -- 0-100, how often bandmate triggers chords
 
+-- sidechain pump
+local sidechain_on = false
+local sidechain_depth = 0.6  -- 0-1, how deep the duck
+local sidechain_rate = 1     -- 1=quarter, 2=eighth, etc
+local SIDECHAIN_RATE_NAMES = {"1/4", "1/8", "1/2", "1 bar"}
+local SIDECHAIN_RATES = {1, 0.5, 2, 4} -- in beats
+local sidechain_clock_id = nil
+
+-- performance
+local k2_held = false
+local k3_held = false
+local filter_sweep_active = false
+local filter_sweep_base = nil -- saved filter before sweep
+local kill_active = false
+
+-- sub boost
+local sub_boost = 0 -- 0-1
+
+-- tape stop
+local tape_stop_clock_id = nil
+
+-- pattern chaining
+local chain_mode = false
+local chain_sequence = {} -- ordered list of favorite indices
+local chain_idx = 1
+local chain_bars_per = 4
+
+-- snapshot morphing
+local morph_snap_active = false
+local morph_snap_from = nil
+local morph_snap_to = nil
+local morph_snap_clock_id = nil
+
 -- effects
 local delay_on = false
 local delay_time = 0.375
@@ -1125,6 +1158,28 @@ local function snapshot_save(slot)
   print("monolith: snapshot saved to slot " .. slot)
 end
 
+local function snapshot_load_data(slot)
+  if not data_dir then return nil end
+  local path = data_dir .. "snapshots/" .. string.format("slot_%02d.dat", slot)
+  local f = io.open(path, "r")
+  if not f then return nil end
+  local state = {engine = {}}
+  for line in f:lines() do
+    local k, v = line:match("^(.-)=(.+)$")
+    if k and v then
+      if k == "voice_mode" then state.voice_mode = tonumber(v)
+      elseif k == "macro" then state.macro = tonumber(v)
+      elseif k == "filter_cutoff" then state.filter_cutoff = tonumber(v)
+      elseif k == "destroy" then state.destroy = tonumber(v)
+      elseif k:sub(1,2) == "e_" then
+        state.engine[k:sub(3)] = tonumber(v)
+      end
+    end
+  end
+  f:close()
+  return state
+end
+
 local function snapshot_load(slot)
   if not data_dir then return end
   local path = data_dir .. "snapshots/" .. string.format("slot_%02d.dat", slot)
@@ -1320,6 +1375,101 @@ local function trigger_time_warp()
     clock.sync(0.5)
     bandmate.warp_skip = 1  -- normal
     bandmate.warp_active = false
+  end)
+end
+
+---------- SIDECHAIN PUMP ----------
+
+local function start_sidechain()
+  if sidechain_clock_id then return end
+  sidechain_on = true
+  sidechain_clock_id = clock.run(function()
+    while sidechain_on do
+      -- duck: quickly drop amplitude
+      engine.ampMod(sidechain_depth)
+      clock.sync(SIDECHAIN_RATES[sidechain_rate] * 0.15)
+      -- release: smoothly bring amplitude back
+      local steps = 6
+      for i = 1, steps do
+        local amt = sidechain_depth * (1 - i / steps)
+        engine.ampMod(amt)
+        clock.sync(SIDECHAIN_RATES[sidechain_rate] * 0.85 / steps)
+      end
+      engine.ampMod(0)
+    end
+  end)
+end
+
+local function stop_sidechain()
+  sidechain_on = false
+  if sidechain_clock_id then
+    clock.cancel(sidechain_clock_id)
+    sidechain_clock_id = nil
+  end
+  pcall(function() engine.ampMod(0) end)
+end
+
+---------- TAPE STOP ----------
+
+local function trigger_tape_stop()
+  if tape_stop_clock_id then return end
+  tape_stop_clock_id = clock.run(function()
+    -- slow down softcut rate (affects delay tails)
+    -- and pitch-bend the engine down
+    for i = 1, 10 do
+      local rate = 1 - (i / 10) * 0.9 -- 1.0 -> 0.1
+      softcut.rate(1, rate)
+      softcut.rate(2, rate)
+      softcut.rate(3, rate)
+      engine.pitchBendAll(rate)
+      clock.sleep(0.06)
+    end
+    -- hold at bottom briefly
+    clock.sleep(0.2)
+    -- snap back
+    softcut.rate(1, 1)
+    softcut.rate(2, 1)
+    softcut.rate(3, 1)
+    engine.pitchBendAll(1)
+    tape_stop_clock_id = nil
+  end)
+end
+
+---------- SNAPSHOT MORPHING ----------
+
+local function morph_snapshots(from_slot, to_slot, bars)
+  if morph_snap_clock_id then clock.cancel(morph_snap_clock_id) end
+  local from = snapshot_slots[from_slot] and snapshot_load_data(from_slot)
+  local to = snapshot_slots[to_slot] and snapshot_load_data(to_slot)
+  if not from or not to then return end
+
+  morph_snap_active = true
+  morph_snap_clock_id = clock.run(function()
+    local total_steps = bars * 16
+    for step = 1, total_steps do
+      local mix = step / total_steps
+      -- interpolate engine params
+      if from.engine and to.engine then
+        for name, from_val in pairs(from.engine) do
+          local to_val = to.engine[name]
+          if to_val and type(from_val) == "number" then
+            local val = from_val + (to_val - from_val) * mix
+            pcall(function() engine[name](val) end)
+          end
+        end
+      end
+      -- interpolate macro and destroy
+      if from.macro and to.macro then
+        apply_macro_val(from.macro + (to.macro - from.macro) * mix)
+      end
+      if from.destroy and to.destroy then
+        destroy = from.destroy + (to.destroy - from.destroy) * mix
+        apply_destroy_layer()
+      end
+      clock.sync(1/4)
+    end
+    morph_snap_active = false
+    morph_snap_clock_id = nil
   end)
 end
 
@@ -2012,6 +2162,31 @@ function init()
     audio.rev_param("hf_damp", val)
   end)
 
+  params:add_control("sub_boost", "sub boost",
+    controlspec.new(0, 1, 'lin', 0.01, 0))
+  params:set_action("sub_boost", function(val)
+    sub_boost = val
+    -- push sub oscillator level up and darken the filter
+    engine.subOscLevel(util.clamp((MODES[voice_mode].base.subOscLevel or 0.5) + val * 0.5, 0, 1))
+    if val > 0 then
+      -- bias filter darker proportional to sub boost
+      local cut = params:get("filter_cutoff")
+      engine.lpFilterCutoff(math.max(60, cut * (1 - val * 0.3)))
+    end
+  end)
+
+  params:add_option("sidechain", "sidechain pump", {"off", "on"}, 1)
+  params:set_action("sidechain", function(val)
+    if val == 2 then start_sidechain() else stop_sidechain() end
+  end)
+
+  params:add_control("sc_depth", "sidechain depth",
+    controlspec.new(0.1, 1, 'lin', 0.01, 0.6))
+  params:set_action("sc_depth", function(val) sidechain_depth = val end)
+
+  params:add_option("sc_rate", "sidechain rate", SIDECHAIN_RATE_NAMES, 1)
+  params:set_action("sc_rate", function(val) sidechain_rate = val end)
+
   params:add_option("stereo_width", "stereo width", STEREO_NAMES, 1)
   params:set_action("stereo_width", function(val)
     stereo_width = val
@@ -2188,7 +2363,17 @@ function enc(n, d)
       params:set("voice_mode", new_mode)
     end
   elseif n == 2 then
-    params:set("macro", util.clamp(macro + d * 0.02, 0, 1))
+    if k2_held then
+      -- K2 + ENC2: filter sweep (DJ-style)
+      if not filter_sweep_active then
+        filter_sweep_active = true
+        filter_sweep_base = filter_base
+      end
+      local mult = d > 0 and 1.12 or (1 / 1.12) -- faster than normal
+      params:set("filter_cutoff", util.clamp(filter_base * mult, 30, 16000))
+    else
+      params:set("macro", util.clamp(macro + d * 0.02, 0, 1))
+    end
   elseif n == 3 then
     local mult = d > 0 and 1.06 or (1 / 1.06)
     params:set("filter_cutoff", util.clamp(filter_base * mult, 20, 18000))
@@ -2196,10 +2381,39 @@ function enc(n, d)
 end
 
 function key(n, z)
-  if n == 2 and z == 1 then
-    params:set("voice_mode", voice_mode % NUM_MODES + 1)
-  elseif n == 3 and z == 1 then
-    params:set("bandmate_on", bandmate_active and 1 or 2)
+  if n == 2 then
+    k2_held = z == 1
+    if z == 1 and not k3_held then
+      -- K2 tap: cycle voice mode (only if not doing combo)
+    elseif z == 0 and filter_sweep_active then
+      -- K2 release: snap filter back
+      filter_sweep_active = false
+      if filter_sweep_base then
+        params:set("filter_cutoff", filter_sweep_base)
+        filter_sweep_base = nil
+      end
+    elseif z == 1 and not filter_sweep_active then
+      params:set("voice_mode", voice_mode % NUM_MODES + 1)
+    end
+  elseif n == 3 then
+    k3_held = z == 1
+    if z == 1 then
+      if k2_held then
+        -- K2+K3 combo: tape stop
+        trigger_tape_stop()
+      else
+        -- K3 hold: kill switch (mute while held)
+        kill_active = true
+        engine.noteOffAll()
+        audio.level_eng(0)
+      end
+    elseif z == 0 then
+      if kill_active then
+        -- K3 release: dramatic re-entry
+        kill_active = false
+        audio.level_eng(1)
+      end
+    end
   end
 end
 
@@ -2288,45 +2502,103 @@ function redraw()
     screen.fill()
   end
 
-  -- separator
-  screen.level(2)
-  screen.move(0, 48)
-  screen.line(128, 48)
-  screen.stroke()
-
-  -- status bar
+  -- info bar (below seismograph)
   screen.font_size(8)
 
-  -- root note
-  screen.level(10)
-  screen.move(2, 58)
-  screen.text(musicutil.note_num_to_name(root_note, true))
+  -- form phase + scale (left side)
+  if bandmate.form_enabled and bandmate_active then
+    screen.level(6)
+    screen.move(2, 56)
+    local phase_display = bandmate.form_phase:upper()
+    screen.text(phase_display)
+  end
 
-  -- macro bar
+  -- scale name (compact)
+  screen.level(4)
+  screen.move(2, 64)
+  local sn = SCALE_NAMES[scale_type] or "?"
+  -- abbreviate long names
+  sn = sn:gsub("Minor Pentatonic", "mPENT")
+    :gsub("Pentatonic", "PENT")
+    :gsub("Mixolydian", "MIXO")
+    :gsub("Phrygian", "PHRYG")
+    :gsub("Chromatic", "CHROM")
+    :gsub("Dorian", "DOR")
+    :gsub("Minor", "min")
+    :gsub("Just Minor", "JUST")
+    :gsub("Arabic", "ARAB")
+    :gsub("Slendro", "SLEN")
+    :gsub("Hirajoshi", "HIRA")
+  screen.text(musicutil.note_num_to_name(root_note, true) .. " " .. sn)
+
+  -- macro bar (center)
   screen.level(3)
-  screen.rect(28, 51, 32, 5)
+  screen.rect(52, 57, 24, 4)
   screen.stroke()
   screen.level(11)
-  screen.rect(28, 51, math.floor(32 * macro), 5)
+  screen.rect(52, 57, math.floor(24 * macro), 4)
   screen.fill()
 
-  -- bandmate
+  -- bandmate style
   if bandmate_active then
-    screen.level(15)
-    screen.move(68, 58)
+    screen.level(12)
+    screen.move(80, 64)
     screen.text(bandmate.STYLE_NAMES[bandmate.style])
-  else
-    screen.level(3)
-    screen.move(68, 58)
-    screen.text("--")
   end
 
   -- bpm
   screen.level(5)
-  screen.move(104, 58)
+  screen.move(80, 56)
   screen.text(math.floor(clock.get_tempo()))
 
-  -- held note indicator (bright dot when note playing)
+  -- active effects icons (top right area)
+  local fx_x = 104
+  local fx_y = 56
+  screen.font_size(8)
+  if sidechain_on then
+    screen.level(8)
+    screen.move(fx_x, fx_y)
+    screen.text("SC")
+    fx_x = fx_x + 12
+  end
+  if delay_on then
+    screen.level(6)
+    screen.move(fx_x, fx_y)
+    screen.text("DL")
+    fx_x = fx_x + 12
+  end
+  -- second row of fx icons
+  fx_x = 104
+  if morph_active then
+    screen.level(7)
+    screen.move(fx_x, 64)
+    screen.text("MO")
+    fx_x = fx_x + 12
+  end
+  if chord_mode > 1 then
+    screen.level(5)
+    screen.move(fx_x, 64)
+    screen.text("CH")
+    fx_x = fx_x + 12
+  end
+
+  -- KILL indicator (full screen flash)
+  if kill_active then
+    screen.level(15)
+    screen.font_size(16)
+    screen.move(40, 40)
+    screen.text("KILL")
+  end
+
+  -- filter sweep indicator
+  if filter_sweep_active then
+    screen.level(12)
+    screen.move(52, 50)
+    screen.font_size(8)
+    screen.text("SWEEP")
+  end
+
+  -- held note indicator
   local n_held = 0
   for _, _ in pairs(current_notes) do n_held = n_held + 1 end
   if n_held > 0 then
@@ -2344,8 +2616,13 @@ function cleanup()
   all_notes_off()
   arp_stop()
   morph_stop()
+  stop_sidechain()
   stop_conductor()
+  if morph_snap_clock_id then clock.cancel(morph_snap_clock_id) end
+  if tape_stop_clock_id then clock.cancel(tape_stop_clock_id) end
   bandmate.stop()
+  audio.level_eng(1) -- ensure not muted from kill switch
+  engine.pitchBendAll(1) -- ensure not bent from tape stop
   if screen_metro then screen_metro:stop() end
   if grid_clock_id then clock.cancel(grid_clock_id) end
   pcall(audio.comp_off)

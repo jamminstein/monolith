@@ -82,6 +82,13 @@ b.progression_rate = 4 -- bars per chord change
 -- chord chance (host reads this to decide chord vs single note)
 b.chord_chance = 0 -- 0-100
 
+-- pattern chaining
+b.chain_mode = false
+b.chain_sequence = {} -- ordered list of pattern indices
+b.chain_idx = 1
+b.chain_bars = 4 -- bars per pattern in chain
+b.chain_bar = 0
+
 -- pattern lock + favorites
 b.locked = false
 b.favorites = {}
@@ -635,6 +642,19 @@ function b.advance()
     if b.progression_mode and #b.progression > 0 then
       if b.bar % b.progression_rate == 0 then
         b.progression_idx = (b.progression_idx % #b.progression) + 1
+      end
+    end
+
+    -- pattern chaining: auto-advance through favorite sequence
+    if b.chain_mode and #b.chain_sequence > 0 then
+      b.chain_bar = b.chain_bar + 1
+      if b.chain_bar >= b.chain_bars then
+        b.chain_bar = 0
+        b.chain_idx = (b.chain_idx % #b.chain_sequence) + 1
+        local fav_idx = b.chain_sequence[b.chain_idx]
+        if b.favorites[fav_idx] then
+          b.pattern = b.deep_copy_pattern(b.favorites[fav_idx])
+        end
       end
     end
 
