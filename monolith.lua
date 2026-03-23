@@ -128,6 +128,26 @@ local PROG_PRESETS = {
 local PROG_NAMES = {}
 for _, p in ipairs(PROG_PRESETS) do table.insert(PROG_NAMES, p.name) end
 
+-- scale palettes: each scene has a home scale + related scales for form phases
+-- index into SCALE_NAMES: 1=MinPent, 2=Dorian, 3=Chromatic, 4=Minor, 5=Phrygian, 6=Mixolydian
+local SCALE_PALETTES = {
+  nil, -- (none)
+  -- HIT: minor home, dorian for departure (brighter), phrygian for grow (darker)
+  {home = 4, depart = 2, grow = 5, silence = 4},
+  -- SYNCOP: min pent home, dorian departure (funkier), mixolydian grow (bluesy)
+  {home = 1, depart = 2, grow = 6, silence = 1},
+  -- CLUB: dorian home (sweet), minor departure (emotional), mixolydian grow (euphoric)
+  {home = 2, depart = 4, grow = 6, silence = 2},
+  -- MINIMAL: min pent home, dorian departure (subtle shift), minor grow
+  {home = 1, depart = 2, grow = 4, silence = 1},
+  -- HEAVY: phrygian home (dark), minor departure, chromatic grow (dissonant build)
+  {home = 5, depart = 4, grow = 3, silence = 5},
+  -- WEIRD: min pent home, chromatic departure, phrygian grow, mixolydian silence
+  {home = 1, depart = 3, grow = 5, silence = 6},
+}
+local active_palette = nil  -- set when a scene is applied
+local last_form_phase = nil -- track phase changes for scale shifts
+
 -- scenes: full instrument presets that configure everything at once
 local SCENE_NAMES = {"(none)", "HIT", "SYNCOP", "CLUB", "MINIMAL", "HEAVY", "WEIRD"}
 local SCENES = {
@@ -168,7 +188,7 @@ local SCENES = {
     harmonize_on = 1,
     rev_level = 0.3, rev_size = 5, rev_damp = 8000, -- spacious club
     bm_prog_mode = 2, bm_prog_type = 2, bm_prog_rate = 8,
-    scale_type = 1, bm_lock = 1,
+    scale_type = 2, bm_lock = 1, -- dorian for club
     bm_form = 2, bm_form_type = 5, -- arc form
     stutter_enabled = 1, bass_drop_enabled = 1, time_warp_enabled = 1,
     morph_on = 1, arp_enabled = 1,
@@ -225,6 +245,9 @@ local function apply_scene(idx)
     scene_anchors[k] = v
     pcall(function() params:set(k, v) end)
   end
+  -- activate scale palette for form-aware scale shifting
+  active_palette = SCALE_PALETTES[idx]
+  last_form_phase = nil
 end
 
 -- robot
@@ -302,6 +325,18 @@ local function start_conductor()
       local destroy = params:get("destroy")
       if destroy > 0.7 then
         params:set("destroy", destroy - (destroy - 0.7) * tame)
+      end
+
+      -- SCALE SHIFTING: change scale based on form phase
+      if active_palette and bandmate.form_enabled then
+        local phase = bandmate.form_phase
+        if phase ~= last_form_phase then
+          last_form_phase = phase
+          local target_scale = active_palette[phase] or active_palette.home
+          if target_scale and target_scale ~= scale_type then
+            params:set("scale_type", target_scale)
+          end
+        end
       end
 
     end
