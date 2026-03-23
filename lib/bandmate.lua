@@ -79,6 +79,9 @@ b.progression = {0, 5, 7, 0} -- I-IV-V-I in semitones
 b.progression_idx = 1
 b.progression_rate = 4 -- bars per chord change
 
+-- chord chance (host reads this to decide chord vs single note)
+b.chord_chance = 0 -- 0-100
+
 -- pattern lock + favorites
 b.locked = false
 b.favorites = {}

@@ -163,6 +163,31 @@ local data_dir -- set in init()
 local snapshot_slots = {}
 local SNAPSHOT_COUNT = 32
 
+-- stereo width (Haas effect via softcut voices 2+3)
+local stereo_width = 1  -- 1=mono, 2=subtle, 3=wide, 4=extreme
+local STEREO_NAMES = {"mono", "subtle", "wide", "extreme"}
+-- L/R delay times in ms for each mode (creates width via Haas effect)
+local STEREO_DELAYS = {
+  {0, 0},        -- mono: no delays
+  {0.005, 0.008},  -- subtle: 5ms L, 8ms R
+  {0.010, 0.018},  -- wide: 10ms L, 18ms R
+  {0.018, 0.030},  -- extreme: 18ms L, 30ms R
+}
+
+-- bass chords
+local chord_mode = 1  -- 1=off, 2=power, 3=minor, 4=jazz, 5=spread
+local CHORD_NAMES = {"off", "power", "minor", "jazz", "spread"}
+-- semitone intervals for each chord type (relative to root)
+local CHORD_INTERVALS = {
+  {},               -- off
+  {7},              -- power: root + 5th
+  {3, 7},           -- minor: root + min3 + 5th
+  {3, 10},          -- jazz: root + min3 + min7
+  {12, 7},          -- spread: root + octave + 5th
+}
+local chord_notes = {}  -- track active chord notes for note_off
+local chord_chance = 0  -- 0-100, how often bandmate triggers chords
+
 -- effects
 local delay_on = false
 local delay_time = 0.375
@@ -237,6 +262,7 @@ local SCENES = {
     bandmate_on = 2, doubling = 2, -- oct below
     delay_on = 1, harmonize_on = 1,
     rev_level = 0.1, rev_size = 1.5, rev_damp = 4000, -- tight room
+    stereo_width = 2, chord_mode = 2, chord_chance = 15, -- subtle wide, occasional power chords
     bm_prog_mode = 1, bm_lock = 1,
     bm_form = 2, bm_form_type = 1, -- A-B-A form
     scale_type = 4, -- minor
@@ -250,6 +276,7 @@ local SCENES = {
     bandmate_on = 2, doubling = 1,
     delay_on = 1, harmonize_on = 1,
     rev_level = 0.05, rev_size = 0.8, rev_damp = 3000, -- dry and tight
+    stereo_width = 1, chord_mode = 1, chord_chance = 0, -- mono, no chords (precision)
     bm_prog_mode = 1, bm_lock = 1,
     bm_form = 2, bm_form_type = 3, -- call-response
     scale_type = 1, -- minor pentatonic
@@ -264,6 +291,7 @@ local SCENES = {
     delay_on = 2, delay_feedback = 0.35, delay_level = 0.25,
     harmonize_on = 1,
     rev_level = 0.3, rev_size = 5, rev_damp = 8000, -- spacious club
+    stereo_width = 3, chord_mode = 3, chord_chance = 20, -- wide, minor chords for lush
     bm_prog_mode = 2, bm_prog_type = 2, bm_prog_rate = 8,
     scale_type = 2, bm_lock = 1, -- dorian for club
     bm_form = 2, bm_form_type = 5, -- arc form
@@ -278,6 +306,7 @@ local SCENES = {
     delay_on = 2, delay_feedback = 0.5, delay_level = 0.2,
     harmonize_on = 1,
     rev_level = 0.2, rev_size = 8, rev_damp = 5000, -- big empty space
+    stereo_width = 2, chord_mode = 1, chord_chance = 0, -- subtle width, no chords (hypnotic)
     bm_prog_mode = 1, bm_lock = 1,
     bm_form = 2, bm_form_type = 1, -- A-B-A
     scale_type = 1,
@@ -291,6 +320,7 @@ local SCENES = {
     bandmate_on = 2, doubling = 4, -- oct+5th
     delay_on = 1, harmonize_on = 1,
     rev_level = 0.08, rev_size = 2, rev_damp = 3500, -- tight, heavy room
+    stereo_width = 3, chord_mode = 2, chord_chance = 30, -- wide, power chords for weight
     bm_prog_mode = 1, bm_lock = 1,
     bm_form = 2, bm_form_type = 2, -- build-drop
     scale_type = 5, -- phrygian
@@ -305,6 +335,7 @@ local SCENES = {
     delay_on = 2, delay_feedback = 0.5, delay_level = 0.3,
     harmonize_on = 2, harmonize_int = 2,
     rev_level = 0.45, rev_size = 14, rev_damp = 12000, -- massive cathedral
+    stereo_width = 4, chord_mode = 4, chord_chance = 40, -- extreme width, jazz chords
     bm_prog_mode = 2, bm_prog_type = 6, bm_prog_rate = 8,
     scale_type = 1, bm_lock = 1,
     bm_form = 2, bm_form_type = 4, -- rondo
@@ -1138,6 +1169,44 @@ local function setup_softcut_delay()
   softcut.filter_dry(1, 0.7)
   softcut.filter_lp(1, 0.3)
   softcut.filter_fc(1, 2000)
+
+  -- voices 2+3: stereo widener (Haas effect)
+  -- short delays panned hard L/R create width from mono engine
+  for v = 2, 3 do
+    softcut.enable(v, 1)
+    softcut.buffer(v, 2) -- use buffer 2 for stereo
+    softcut.level(v, 0) -- off by default (mono)
+    softcut.pan(v, v == 2 and -1 or 1) -- hard L / hard R
+    softcut.rate(v, 1)
+    softcut.loop(v, 1)
+    softcut.loop_start(v, 0)
+    softcut.loop_end(v, 0.05) -- very short loop = very short delay
+    softcut.position(v, 0)
+    softcut.play(v, 1)
+    softcut.rec(v, 1)
+    softcut.rec_level(v, 1)
+    softcut.pre_level(v, 0) -- no feedback (just delay, not echo)
+    softcut.level_slew_time(v, 0.05)
+    softcut.filter_dry(v, 1.0) -- clean signal
+    softcut.filter_lp(v, 0)
+    softcut.filter_fc(v, 8000)
+  end
+end
+
+local function update_stereo()
+  local delays = STEREO_DELAYS[stereo_width] or STEREO_DELAYS[1]
+  if stereo_width == 1 then
+    -- mono: turn off stereo voices
+    softcut.level(2, 0)
+    softcut.level(3, 0)
+    if not delay_on then audio.level_cut(0) end
+  else
+    audio.level_cut(1) -- softcut output must be on for stereo
+    softcut.level(2, 0.7)
+    softcut.level(3, 0.7)
+    softcut.loop_end(2, math.max(0.002, delays[1]))
+    softcut.loop_end(3, math.max(0.002, delays[2]))
+  end
 end
 
 local function update_delay()
@@ -1147,7 +1216,13 @@ local function update_delay()
     softcut.loop_end(1, math.max(0.05, delay_time))
     softcut.pre_level(1, delay_feedback)
   else
-    audio.level_cut(0)
+    -- only mute softcut if stereo is also off
+    if stereo_width == 1 then
+      audio.level_cut(0)
+    else
+      audio.level_cut(1)
+    end
+    softcut.level(1, 0) -- mute delay voice specifically
   end
 end
 
@@ -1490,6 +1565,22 @@ local function note_on(note, vel)
     end
     if #extras > 0 then doubled_notes[note] = extras end
   end
+  -- bass chords
+  if chord_mode > 1 then
+    local intervals = CHORD_INTERVALS[chord_mode]
+    if intervals and #intervals > 0 then
+      local cns = {}
+      for _, interval in ipairs(intervals) do
+        local cn = note + interval
+        if cn >= 20 and cn <= 96 then
+          local cid = note + 4000 + interval
+          engine.noteOn(cid, note_to_freq(cn), vel * 0.4)
+          table.insert(cns, cid)
+        end
+      end
+      if #cns > 0 then chord_notes[note] = cns end
+    end
+  end
   -- seismograph
   activity[act_head] = {vel = vel, age = 0}
   act_head = act_head % ACT_LEN + 1
@@ -1512,6 +1603,11 @@ local function note_off(note)
   if doubled_notes[note] then
     for _, id in ipairs(doubled_notes[note]) do engine.noteOff(id) end
     doubled_notes[note] = nil
+  end
+  -- chord notes off
+  if chord_notes[note] then
+    for _, id in ipairs(chord_notes[note]) do engine.noteOff(id) end
+    chord_notes[note] = nil
   end
   if midi_out_device and params:get("midi_out") == 2 then
     midi_out_device:note_off(note, 0, midi_out_channel)
@@ -1886,6 +1982,18 @@ function init()
     audio.rev_param("hf_damp", val)
   end)
 
+  params:add_option("stereo_width", "stereo width", STEREO_NAMES, 1)
+  params:set_action("stereo_width", function(val)
+    stereo_width = val
+    update_stereo()
+  end)
+
+  params:add_option("chord_mode", "bass chords", CHORD_NAMES, 1)
+  params:set_action("chord_mode", function(val) chord_mode = val end)
+
+  params:add_number("chord_chance", "bandmate chord %", 0, 100, 0)
+  params:set_action("chord_chance", function(val) bandmate.chord_chance = val end)
+
   params:add_option("delay_on", "tape delay", {"off", "on"}, 1)
   params:set_action("delay_on", function(val)
     delay_on = val == 2
@@ -1973,7 +2081,24 @@ function init()
   midi_out_device = midi.connect(2)
 
   -- init bandmate
-  bandmate.init(note_on, note_off, root_note, SCALE_NAMES[scale_type])
+  -- wrap note_on for bandmate: handles chord chance
+  local function bandmate_note_on(note, vel)
+    local saved_chord = chord_mode
+    if bandmate.chord_chance > 0 and math.random(100) <= bandmate.chord_chance then
+      -- temporarily pick a random chord type for this note
+      if chord_mode == 1 then
+        chord_mode = math.random(2, #CHORD_NAMES)
+      end
+    elseif chord_mode > 1 and bandmate.chord_chance < 100 then
+      -- sometimes play single notes even when chords are on
+      if math.random(100) > bandmate.chord_chance then
+        chord_mode = 1
+      end
+    end
+    note_on(note, vel)
+    chord_mode = saved_chord -- restore
+  end
+  bandmate.init(bandmate_note_on, note_off, root_note, SCALE_NAMES[scale_type])
   bandmate.load_all_favorites(data_dir)
 
   -- init effects + snapshots + grid
